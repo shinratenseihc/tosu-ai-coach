@@ -1,5 +1,11 @@
 # TOSU AI Coach
 
+<p align="center">
+  <img src="logo.png" alt="TOSU AI Coach" width="420">
+</p>
+
+<p align="center"><strong>Un coach osu! local, utile, drôle et sans clé API développeur.</strong></p>
+
 Un coach osu! local qui transforme chaque fin de partie — réussite, fail ou abandon — en retour utile, suivi de progression et chambrage entre potes. Le but n’est pas d’afficher un tableau Excel de plus : le coach célèbre les petits progrès, tire une leçon des mauvaises games et propose une prochaine action concrète.
 
 Il fonctionne avec **Claude CLI et/ou Codex CLI, sans clé API développeur**. Il réutilise la session déjà connectée à l’outil choisi : aucune clé à créer, aucun secret à copier et aucune facturation API séparée.
