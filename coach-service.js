@@ -236,18 +236,24 @@ function instantSummary(record, previous) {
   parts.push(`${record.accuracy.toFixed(2)}% • ${record.misses} miss${record.misses === 1 ? '' : 'es'} • ${record.combo}/${record.maxCombo}x`);
   if (record.timing.average < -8) parts.push(`timing plutôt early (${record.timing.average} ms)`);
   else if (record.timing.average > 8) parts.push(`timing plutôt late (+${record.timing.average} ms)`);
-  else parts.push('timing bien centré');
+  else {
+    const timingLines = ['tes frappes sont plutôt bien calées', 'le timing tient la route sur cette partie', 'pas de gros décalage de timing à signaler', 'tes clics restent dans une zone assez propre', 'le métronome intérieur fait son boulot'];
+    parts.push(timingLines[Math.floor(Date.now() / 1000) % timingLines.length]);
+  }
   if (previous) {
     const delta = record.accuracy - previous.accuracy;
     if (delta > 0) parts.push(`+${delta.toFixed(2)}% d’acc : petit progrès, mais progrès quand même, on prend !`);
-    else parts.push('Pas la game du siècle, mais elle nous montre exactement quoi travailler ensuite.');
+    else {
+      const learningLines = ['Cette tentative n’a pas tout donné, mais elle a laissé des indices utiles.', 'On n’encadre pas encore le replay, mais on sait déjà quoi régler ensuite.', 'Le résultat pique un peu ; les données, elles, sont exploitables.', 'Ce run n’entre pas au musée, mais il nous donne une piste claire.', 'Pas besoin de dramatiser : on récupère l’info et on repart plus malin.'];
+      parts.push(learningLines[Math.floor(Date.now() / 1000) % learningLines.length]);
+    }
   }
   return parts.join(' — ');
 }
 
 function promptFor(record, recent) {
   const language = resolveLanguage();
-  return `Tu es le pote-coach osu! du joueur. Réponds obligatoirement en ${languageName(language)} (${language}), même si les données sont dans une autre langue. Tu parles comme un bon ami : naturel, énergique, un peu cynique, avec de la déconne et du chambrage affectueux, jamais méchant ni humiliant. Une mauvaise partie n'est jamais un échec : c'est une source d'information. Commence TOUJOURS par saluer un progrès, même minuscule, ou à défaut un élément utile appris pendant cette partie. Compare intelligemment avec l'historique, surtout la même beatmap si disponible, sans inventer de progrès absent des données. Si completion vaut "failed" ou "abandoned", constate qu'il n'a pas fini et invente un chambrage original lié au contexte. Si progressPercent vaut 90 ou plus, reconnais qu'abandonner si près de la fin peut éviter d'enregistrer un score douloureux, avec une blague adaptée. Si retryStreak vaut 5 ou plus, conseille de sortir de cette boucle et de faire une pause ou changer de map, avec une formule drôle. Si fatigueAdvice existe, suggère naturellement une pause courte, de l'eau ou de bouger un peu ; ce n'est pas un diagnostic. Varie les thèmes et les formulations. Ne traite pas l'accuracy partielle comme un score final. Ensuite donne 1 ou 2 conseils très concrets. Si offsetAdvice existe, mentionne exactement le changement d'offset proposé et précise que c'est un essai prudent ; sinon, ne parle jamais d'offset. Réponse sans markdown, maximum 500 caractères. Partie: ${JSON.stringify(record)}. Historique récent: ${JSON.stringify(recent.slice(-10))}. Données de fatigue: ${JSON.stringify(record.fatigueAdvice || null)}`;
+  return `Tu es le pote-coach osu! du joueur. Réponds obligatoirement en ${languageName(language)} (${language}), même si les données sont dans une autre langue. Tu parles comme un bon ami : naturel, énergique, un peu cynique, avec de la déconne et du chambrage affectueux, jamais méchant ni humiliant. Une mauvaise partie n'est jamais un échec : c'est une source d'information. Commence TOUJOURS par saluer un progrès, même minuscule, ou à défaut un élément utile appris pendant cette partie. Compare intelligemment avec l'historique, surtout la même beatmap si disponible, sans inventer de progrès absent des données. Si completion vaut "failed" ou "abandoned", constate qu'il n'a pas fini et invente un chambrage original lié au contexte. Si progressPercent vaut 90 ou plus, reconnais qu'abandonner si près de la fin peut éviter d'enregistrer un score douloureux, avec une blague adaptée. Si retryStreak vaut 5 ou plus, conseille de sortir de cette boucle et de faire une pause ou changer de map, avec une formule drôle. Si fatigueAdvice existe, suggère naturellement une pause courte, de l'eau ou de bouger un peu ; ce n'est pas un diagnostic. Varie fortement les thèmes et les formulations. N'utilise pas les expressions « timing bien centré », « pas la game du siècle » ou une variante proche à chaque partie. Ne traite pas l'accuracy partielle comme un score final. Ensuite donne 1 ou 2 conseils très concrets. Si offsetAdvice existe, mentionne exactement le changement d'offset proposé et précise que c'est un essai prudent ; sinon, ne parle jamais d'offset. Réponse sans markdown, maximum 500 caractères. Partie: ${JSON.stringify(record)}. Historique récent: ${JSON.stringify(recent.slice(-10))}. Données de fatigue: ${JSON.stringify(record.fatigueAdvice || null)}`;
 }
 
 function runProcess(executable, args, timeoutMs = 60000, stdinText = '') {
