@@ -1,0 +1,24 @@
+# User data (stored in %LOCALAPPDATA% in production)
+config.json
+history.json
+last-state.json
+coach.log
+logs/
+
+# Local tooling
+node_modules/
+coverage/
+.env
+*.local
+*.log
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Installer output
+dist/
+*.zip

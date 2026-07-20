@@ -1,0 +1,7 @@
+{
+  "provider": "auto",
+  "claude_first": true,
+  "history_limit": 2000,
+  "tosu_url": "http://127.0.0.1:24050",
+  "coach_port": 24051
+}

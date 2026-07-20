@@ -1,0 +1,16 @@
+{
+  "name": "tosu-ai-coach",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Coach IA local et overlay portrait pour osu! via TOSU, compatible Claude CLI et Codex CLI.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node coach-service.js",
+    "check": "node --check coach-service.js && node --check counter/main.js",
+    "test": "node --test --test-isolation=none"
+  },
+  "keywords": ["osu", "tosu", "overlay", "coach", "claude", "codex"]
+}

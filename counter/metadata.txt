@@ -1,0 +1,6 @@
+Usecase: Ingame Overlay, OBS Overlay
+Name: Coach IA
+Version: 1.0.0
+Author: ShinraTenseiHC + Codex
+CompatibleWith: Tosu
+Resolution: 360x640
