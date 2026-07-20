@@ -19,6 +19,7 @@ Il fonctionne avec **Claude CLI et/ou Codex CLI, sans clé API développeur**. I
 - Bascule automatique entre Claude et Codex.
 - Réponse dans la langue de Windows, avec possibilité de forcer une langue.
 - Overlay portrait 9:16 permanent.
+- Logo officiel TOSU AI Coach intégré à l’overlay.
 - Données privées dans `%LOCALAPPDATA%\TosuAICoach`.
 
 ## Prérequis
