@@ -11,6 +11,9 @@ Le fichier actif est `%LOCALAPPDATA%\TosuAICoach\config.json`, créé depuis `co
 | `personality` | `balanced` | `balanced`, `supportive`, `sarcastic`, `competitive` ou `analyst` |
 | `display_mode` | `timed` | `timed` masque le panneau après le délai ; `always` le garde visible |
 | `display_seconds` | `20` | Durée d’affichage en mode temporisé, de 5 à 120 secondes |
+| `overlay_accent_color` | `#ff66aa` | Couleur d’accent de l’overlay au format hexadécimal `#rrggbb` |
+| `overlay_show_background` | `true` | Affiche le fond du panneau ; à `false`, texte seul avec ombre portée |
+| `overlay_show_logo` | `true` | Affiche le logo en haut de l’overlay |
 | `history_limit` | `2000` | Parties conservées |
 | `session_gap_minutes` | `90` | Temps sans partie avant une nouvelle session |
 | `pause_cooldown_minutes` | `60` | Délai minimal entre deux conseils de pause |

@@ -13,7 +13,7 @@ const DASHBOARD_DIR = path.join(ROOT, 'dashboard');
 const LOG_DIR = path.join(DATA_DIR, 'logs');
 const LOG_PATH = path.join(LOG_DIR, 'coach.log');
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-const DEFAULT_CONFIG = { provider: 'auto', claude_first: true, language: 'auto', coach_name: 'Coach IA', personality: 'balanced', display_mode: 'timed', display_seconds: 20, history_limit: 2000, session_gap_minutes: 90, pause_cooldown_minutes: 60, failure_pause_minutes: 15, failure_pause_attempts: 6, performance_pause_minutes: 30, max_report_chars: 350, comfortable_stars: null, comfortable_stars_min: null, comfortable_stars_max: null, goals: [], weaknesses: [], current_rank: null, rank_goal: null, rank_region: '', osu_integration_enabled: false, osu_username: '', osu_supporter: false, allow_online_recommendations: false, allow_knowledge_updates: false, tosu_url: 'http://127.0.0.1:24050', coach_port: 24051 };
+const DEFAULT_CONFIG = { provider: 'auto', claude_first: true, language: 'auto', coach_name: 'Coach IA', personality: 'balanced', display_mode: 'timed', display_seconds: 20, overlay_accent_color: '#ff66aa', overlay_show_background: true, overlay_show_logo: true, history_limit: 2000, session_gap_minutes: 90, pause_cooldown_minutes: 60, failure_pause_minutes: 15, failure_pause_attempts: 6, performance_pause_minutes: 30, max_report_chars: 350, comfortable_stars: null, comfortable_stars_min: null, comfortable_stars_max: null, goals: [], weaknesses: [], current_rank: null, rank_goal: null, rank_region: '', osu_integration_enabled: false, osu_username: '', osu_supporter: false, allow_online_recommendations: false, allow_knowledge_updates: false, tosu_url: 'http://127.0.0.1:24050', coach_port: 24051 };
 
 function findExecutable(command, candidates = []) {
   for (const candidate of candidates) if (candidate && fs.existsSync(candidate)) return candidate;
@@ -123,8 +123,9 @@ function updatePublicConfig(input) {
   if (typeof input.language === 'string' && /^[a-z]{2,8}([-_][a-z]{2,8})?$/i.test(input.language)) next.language = input.language;
   if (typeof input.rank_region === 'string') next.rank_region = input.rank_region.trim().slice(0, 40);
   if (typeof input.coach_name === 'string') next.coach_name = input.coach_name.trim().slice(0, 32) || 'Coach IA';
+  if (typeof input.overlay_accent_color === 'string' && /^#[0-9a-f]{6}$/i.test(input.overlay_accent_color.trim())) next.overlay_accent_color = input.overlay_accent_color.trim().toLowerCase();
   if (typeof input.osu_username === 'string') next.osu_username = input.osu_username.trim().slice(0, 40);
-  for (const key of ['osu_integration_enabled', 'osu_supporter', 'allow_online_recommendations', 'allow_knowledge_updates']) if (typeof input[key] === 'boolean') next[key] = input[key];
+  for (const key of ['overlay_show_background', 'overlay_show_logo', 'osu_integration_enabled', 'osu_supporter', 'allow_online_recommendations', 'allow_knowledge_updates']) if (typeof input[key] === 'boolean') next[key] = input[key];
   if (next.comfortable_stars_min && next.comfortable_stars_max && next.comfortable_stars_min > next.comfortable_stars_max) {
     [next.comfortable_stars_min, next.comfortable_stars_max] = [next.comfortable_stars_max, next.comfortable_stars_min];
   }
@@ -832,7 +833,10 @@ const server = http.createServer(async (req, res) => {
   }
   if (pathname === '/api/progress' && req.method === 'GET') return res.end(JSON.stringify(progressByDay(history(), requestUrl.searchParams.get('days'))));
   if (pathname === '/api/warmup' && req.method === 'GET') return res.end(JSON.stringify(warmupRecommendations(history())));
-  if (pathname === '/state') return res.end(JSON.stringify({ ...state, language: resolveLanguage(), coachName: config().coach_name || 'Coach IA', gameStatus, displayMode: config().display_mode || 'timed', displaySeconds: Number(config().display_seconds) || 20 }));
+  if (pathname === '/state') {
+    const cfg = config();
+    return res.end(JSON.stringify({ ...state, language: resolveLanguage(), coachName: cfg.coach_name || 'Coach IA', gameStatus, displayMode: cfg.display_mode || 'timed', displaySeconds: Number(cfg.display_seconds) || 20, overlay: { accentColor: /^#[0-9a-f]{6}$/i.test(String(cfg.overlay_accent_color || '')) ? String(cfg.overlay_accent_color).toLowerCase() : '#ff66aa', showBackground: cfg.overlay_show_background !== false, showLogo: cfg.overlay_show_logo !== false } }));
+  }
   if (pathname === '/history') return res.end(JSON.stringify(history()));
   if (pathname === '/preview') {
     if (!state.record) {
