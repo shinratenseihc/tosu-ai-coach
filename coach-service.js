@@ -2,6 +2,7 @@ const { spawn, spawnSync } = require('node:child_process');
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const osuApi = require('./osu-api.js');
 
 const ROOT = __dirname;
 const DATA_DIR = process.env.TOSU_COACH_DATA_DIR || path.join(process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || ROOT, 'AppData', 'Local'), 'TosuAICoach');
@@ -13,7 +14,7 @@ const DASHBOARD_DIR = path.join(ROOT, 'dashboard');
 const LOG_DIR = path.join(DATA_DIR, 'logs');
 const LOG_PATH = path.join(LOG_DIR, 'coach.log');
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-const DEFAULT_CONFIG = { provider: 'auto', claude_first: true, language: 'auto', coach_name: 'Coach IA', personality: 'balanced', display_mode: 'timed', display_seconds: 20, overlay_accent_color: '#ff66aa', overlay_show_background: true, overlay_show_logo: true, history_limit: 2000, session_gap_minutes: 90, pause_cooldown_minutes: 60, failure_pause_minutes: 15, failure_pause_attempts: 6, performance_pause_minutes: 30, max_report_chars: 350, comfortable_stars: null, comfortable_stars_min: null, comfortable_stars_max: null, goals: [], weaknesses: [], current_rank: null, rank_goal: null, rank_region: '', osu_integration_enabled: false, osu_username: '', osu_supporter: false, allow_online_recommendations: false, allow_knowledge_updates: false, tosu_url: 'http://127.0.0.1:24050', coach_port: 24051 };
+const DEFAULT_CONFIG = { provider: 'auto', claude_first: true, language: 'auto', coach_name: 'Coach IA', personality: 'balanced', display_mode: 'timed', display_seconds: 20, overlay_accent_color: '#ff66aa', overlay_show_background: true, overlay_background_opacity: 100, overlay_show_logo: true, history_limit: 2000, session_gap_minutes: 90, pause_cooldown_minutes: 60, failure_pause_minutes: 15, failure_pause_attempts: 6, performance_pause_minutes: 30, max_report_chars: 350, comfortable_stars: null, comfortable_stars_min: null, comfortable_stars_max: null, goals: [], weaknesses: [], current_rank: null, rank_goal: null, rank_region: '', osu_integration_enabled: false, osu_username: '', osu_client_id: '', osu_client_secret: '', osu_supporter: false, allow_online_recommendations: false, allow_knowledge_updates: false, tosu_url: 'http://127.0.0.1:24050', coach_port: 24051 };
 
 function findExecutable(command, candidates = []) {
   for (const candidate of candidates) if (candidate && fs.existsSync(candidate)) return candidate;
@@ -124,7 +125,14 @@ function updatePublicConfig(input) {
   if (typeof input.rank_region === 'string') next.rank_region = input.rank_region.trim().slice(0, 40);
   if (typeof input.coach_name === 'string') next.coach_name = input.coach_name.trim().slice(0, 32) || 'Coach IA';
   if (typeof input.overlay_accent_color === 'string' && /^#[0-9a-f]{6}$/i.test(input.overlay_accent_color.trim())) next.overlay_accent_color = input.overlay_accent_color.trim().toLowerCase();
+  if (input.overlay_background_opacity !== undefined) {
+    next.overlay_background_opacity = Math.max(0, Math.min(100, Math.round(Number(input.overlay_background_opacity) || 0)));
+    next.overlay_show_background = next.overlay_background_opacity > 0;
+  }
   if (typeof input.osu_username === 'string') next.osu_username = input.osu_username.trim().slice(0, 40);
+  if (typeof input.osu_client_id === 'string' && /^\d{0,20}$/.test(input.osu_client_id.trim())) next.osu_client_id = input.osu_client_id.trim();
+  if (typeof input.osu_client_secret === 'string' && input.osu_client_secret.trim()) next.osu_client_secret = input.osu_client_secret.trim().slice(0, 120);
+  if (input.osu_client_secret === null) next.osu_client_secret = '';
   for (const key of ['overlay_show_background', 'overlay_show_logo', 'osu_integration_enabled', 'osu_supporter', 'allow_online_recommendations', 'allow_knowledge_updates']) if (typeof input[key] === 'boolean') next[key] = input[key];
   if (next.comfortable_stars_min && next.comfortable_stars_max && next.comfortable_stars_min > next.comfortable_stars_max) {
     [next.comfortable_stars_min, next.comfortable_stars_max] = [next.comfortable_stars_max, next.comfortable_stars_min];
@@ -432,6 +440,32 @@ function playerProfile() {
     rankGoal: cfg.rank_goal || null,
     rankRegion: cfg.rank_region || null,
   };
+}
+
+function pickRank(profile, rankRegion) {
+  if (!profile) return null;
+  if (String(rankRegion || '').trim() && Number.isFinite(Number(profile.countryRank)) && profile.countryRank) return Number(profile.countryRank);
+  return Number.isFinite(Number(profile.globalRank)) && profile.globalRank ? Number(profile.globalRank) : null;
+}
+
+function osuIntegrationReady(cfg = config()) {
+  return Boolean(cfg.osu_integration_enabled && String(cfg.osu_username || '').trim() && String(cfg.osu_client_id || '').trim() && String(cfg.osu_client_secret || '').trim());
+}
+
+async function syncOsuProfile() {
+  const cfg = config();
+  if (!osuIntegrationReady(cfg)) throw new Error('intégration osu! non configurée : active-la et renseigne pseudo, client ID et secret');
+  const profile = await osuApi.fetchUser(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), String(cfg.osu_username).trim());
+  const rank = pickRank(profile, cfg.rank_region);
+  if (rank) {
+    const next = { ...config(), current_rank: rank };
+    saveConfig(next);
+    const snapshots = readJson(PROFILE_HISTORY_PATH, []);
+    snapshots.push({ timestamp: new Date().toISOString(), current_rank: next.current_rank, rank_goal: next.rank_goal, source: 'osu-sync' });
+    fs.writeFileSync(PROFILE_HISTORY_PATH, `${JSON.stringify(snapshots.slice(-500), null, 2)}\n`, 'utf8');
+  }
+  log(`Profil osu! synchronisé : ${profile.username} (global #${profile.globalRank ?? '—'}, pays #${profile.countryRank ?? '—'})`);
+  return { ...profile, appliedRank: rank };
 }
 
 function personalityInstruction(value = config().personality) {
@@ -815,14 +849,27 @@ const server = http.createServer(async (req, res) => {
   const requestUrl = new URL(req.url, 'http://127.0.0.1');
   const pathname = requestUrl.pathname;
   if (req.method === 'GET' && serveDashboard(pathname, res)) return;
-  if (pathname === '/api/config' && req.method === 'GET') return res.end(JSON.stringify(config()));
+  if (pathname === '/api/config' && req.method === 'GET') {
+    const { osu_client_secret, ...publicConfig } = config();
+    return res.end(JSON.stringify({ ...publicConfig, osu_client_secret: '', osu_client_secret_set: Boolean(String(osu_client_secret || '').trim()) }));
+  }
   if (pathname === '/api/config' && req.method === 'POST') {
     try {
       const next = updatePublicConfig(await readRequestJson(req));
       log('Profil joueur mis à jour depuis le tableau de bord');
-      return res.end(JSON.stringify({ ok: true, config: next }));
+      const { osu_client_secret, ...publicNext } = next;
+      return res.end(JSON.stringify({ ok: true, config: { ...publicNext, osu_client_secret: '', osu_client_secret_set: Boolean(String(osu_client_secret || '').trim()) } }));
     } catch (error) {
       res.statusCode = 400;
+      return res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+  if (pathname === '/api/osu/sync' && req.method === 'POST') {
+    try {
+      const profile = await syncOsuProfile();
+      return res.end(JSON.stringify({ ok: true, profile }));
+    } catch (error) {
+      res.statusCode = 502;
       return res.end(JSON.stringify({ error: error.message }));
     }
   }
@@ -835,7 +882,9 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/warmup' && req.method === 'GET') return res.end(JSON.stringify(warmupRecommendations(history())));
   if (pathname === '/state') {
     const cfg = config();
-    return res.end(JSON.stringify({ ...state, language: resolveLanguage(), coachName: cfg.coach_name || 'Coach IA', gameStatus, displayMode: cfg.display_mode || 'timed', displaySeconds: Number(cfg.display_seconds) || 20, overlay: { accentColor: /^#[0-9a-f]{6}$/i.test(String(cfg.overlay_accent_color || '')) ? String(cfg.overlay_accent_color).toLowerCase() : '#ff66aa', showBackground: cfg.overlay_show_background !== false, showLogo: cfg.overlay_show_logo !== false } }));
+    const rawOpacity = Number(cfg.overlay_background_opacity);
+    const backgroundOpacity = cfg.overlay_show_background === false ? 0 : Math.max(0, Math.min(100, Number.isFinite(rawOpacity) ? Math.round(rawOpacity) : 100));
+    return res.end(JSON.stringify({ ...state, language: resolveLanguage(), coachName: cfg.coach_name || 'Coach IA', gameStatus, displayMode: cfg.display_mode || 'timed', displaySeconds: Number(cfg.display_seconds) || 20, overlay: { accentColor: /^#[0-9a-f]{6}$/i.test(String(cfg.overlay_accent_color || '')) ? String(cfg.overlay_accent_color).toLowerCase() : '#ff66aa', backgroundOpacity, showBackground: backgroundOpacity > 0, showLogo: cfg.overlay_show_logo !== false } }));
   }
   if (pathname === '/history') return res.end(JSON.stringify(history()));
   if (pathname === '/preview') {
@@ -888,10 +937,11 @@ function main() {
   }
   restoreLastReport();
   showSessionRecap();
+  if (osuIntegrationReady()) syncOsuProfile().catch(error => log(`Sync osu! au démarrage impossible : ${error.message}`));
   const port = Number(config().coach_port) || DEFAULT_CONFIG.coach_port;
   server.listen(port, '127.0.0.1', () => { log(`Coach API sur http://127.0.0.1:${port}`); pollTosu(); });
 }
 
 if (require.main === module) main();
 
-module.exports = { timingStats, recordFingerprint, offsetAdvice, instantSummary, makeRecord, retryStreak, fatigueAdvice, sessionTransition, sessionSummary, previousMapResult, bestMapResult, makeLiveRecord, mapStartSummary, removeUnscheduledBreakAdvice, sessionMemory, splitSessions, summarizeSession, progressByDay, personalityInstruction, warmupRecommendations, displayDeadline, coachingKnowledge };
+module.exports = { timingStats, recordFingerprint, offsetAdvice, instantSummary, makeRecord, retryStreak, fatigueAdvice, sessionTransition, sessionSummary, previousMapResult, bestMapResult, makeLiveRecord, mapStartSummary, removeUnscheduledBreakAdvice, sessionMemory, splitSessions, summarizeSession, progressByDay, personalityInstruction, warmupRecommendations, displayDeadline, coachingKnowledge, pickRank, osuIntegrationReady };

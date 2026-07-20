@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const testDataDir = path.join(os.tmpdir(), `tosu-ai-coach-tests-${process.pid}`);
 process.env.TOSU_COACH_DATA_DIR = testDataDir;
-const { timingStats, recordFingerprint, offsetAdvice, instantSummary, retryStreak, fatigueAdvice, sessionTransition, sessionSummary, previousMapResult, bestMapResult, makeLiveRecord, mapStartSummary, removeUnscheduledBreakAdvice, sessionMemory, splitSessions, summarizeSession, progressByDay, personalityInstruction, warmupRecommendations, displayDeadline, coachingKnowledge } = require('../coach-service');
+const { timingStats, recordFingerprint, offsetAdvice, instantSummary, retryStreak, fatigueAdvice, sessionTransition, sessionSummary, previousMapResult, bestMapResult, makeLiveRecord, mapStartSummary, removeUnscheduledBreakAdvice, sessionMemory, splitSessions, summarizeSession, progressByDay, personalityInstruction, warmupRecommendations, displayDeadline, coachingKnowledge, pickRank } = require('../coach-service');
 
 test.after(() => {
   if (path.dirname(testDataDir) === os.tmpdir() && path.basename(testDataDir).startsWith('tosu-ai-coach-tests-')) {
@@ -183,4 +183,17 @@ test('displayDeadline utilise une durée temporisée', () => {
 test('la base de connaissances distingue UR et biais de timing', () => {
   assert.match(coachingKnowledge(), /UR.*régularité/);
   assert.match(coachingKnowledge(), /early\/late/);
+});
+
+test('pickRank utilise le rank pays quand une région est renseignée', () => {
+  const profile = { globalRank: 150000, countryRank: 1109 };
+  assert.equal(pickRank(profile, 'Suisse'), 1109);
+  assert.equal(pickRank(profile, ''), 150000);
+  assert.equal(pickRank(profile, '   '), 150000);
+});
+
+test('pickRank retombe sur le rank global ou null sans données', () => {
+  assert.equal(pickRank({ globalRank: 42, countryRank: null }, 'Suisse'), 42);
+  assert.equal(pickRank({ globalRank: null, countryRank: null }, ''), null);
+  assert.equal(pickRank(null, 'Suisse'), null);
 });

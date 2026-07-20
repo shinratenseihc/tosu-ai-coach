@@ -12,7 +12,8 @@ Le fichier actif est `%LOCALAPPDATA%\TosuAICoach\config.json`, créé depuis `co
 | `display_mode` | `timed` | `timed` masque le panneau après le délai ; `always` le garde visible |
 | `display_seconds` | `20` | Durée d’affichage en mode temporisé, de 5 à 120 secondes |
 | `overlay_accent_color` | `#ff66aa` | Couleur d’accent de l’overlay au format hexadécimal `#rrggbb` |
-| `overlay_show_background` | `true` | Affiche le fond du panneau ; à `false`, texte seul avec ombre portée |
+| `overlay_show_background` | `true` | Compatibilité : `false` équivaut à une opacité de 0 |
+| `overlay_background_opacity` | `100` | Opacité du fond du panneau de 0 à 100 ; sous 50, une ombre portée garde le texte lisible |
 | `overlay_show_logo` | `true` | Affiche le logo en haut de l’overlay |
 | `history_limit` | `2000` | Parties conservées |
 | `session_gap_minutes` | `90` | Temps sans partie avant une nouvelle session |
@@ -28,8 +29,10 @@ Le fichier actif est `%LOCALAPPDATA%\TosuAICoach\config.json`, créé depuis `co
 | `weaknesses` | `[]` | Points faibles déclarés parmi les catégories ci-dessous |
 | `current_rank` | `null` | Rank actuel facultatif |
 | `rank_goal` | `null` | Objectif de rank facultatif |
-| `osu_integration_enabled` | `false` | Consentement pour activer la future connexion OAuth osu! |
+| `osu_integration_enabled` | `false` | Active la connexion osu! ; voir [OSU_INTEGRATION.md](OSU_INTEGRATION.md) |
 | `osu_username` | `""` | Nom d’utilisateur osu! utilisé par l’intégration optionnelle |
+| `osu_client_id` | `""` | Client ID de ton application OAuth osu! personnelle |
+| `osu_client_secret` | `""` | Client Secret associé ; stocké localement, jamais renvoyé par l’API |
 | `osu_supporter` | `false` | Indique que les liens osu!direct peuvent être proposés |
 | `allow_online_recommendations` | `false` | Consentement séparé pour chercher de nouvelles maps en ligne |
 | `allow_knowledge_updates` | `false` | Consentement pour une future mise à jour en ligne de la base documentaire |

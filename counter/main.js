@@ -14,9 +14,12 @@ async function refresh(){
     const overlay=state.overlay||{};
     const accent=/^#[0-9a-f]{6}$/i.test(String(overlay.accentColor||''))?overlay.accentColor:'#ff66aa';
     const rgb=[1,3,5].map(i=>parseInt(accent.slice(i,i+2),16)).join(',');
+    const rawOpacity=Number(overlay.backgroundOpacity);
+    const bgAlpha=(Number.isFinite(rawOpacity)?Math.max(0,Math.min(100,rawOpacity)):overlay.showBackground===false?0:100)/100;
     document.documentElement.style.setProperty('--accent',accent);
     document.documentElement.style.setProperty('--accent-rgb',rgb);
-    card.classList.toggle('no-bg',overlay.showBackground===false);
+    document.documentElement.style.setProperty('--bg-alpha',String(bgAlpha));
+    card.classList.toggle('dim-bg',bgAlpha<0.5);
     card.classList.toggle('no-logo',overlay.showLogo===false);
     card.classList.toggle('hidden',!visible);
     if(!visible||state.updatedAt===lastUpdate)return;
