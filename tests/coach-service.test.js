@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const testDataDir = path.join(os.tmpdir(), `tosu-ai-coach-tests-${process.pid}`);
 process.env.TOSU_COACH_DATA_DIR = testDataDir;
-const { timingStats, recordFingerprint, offsetAdvice, instantSummary } = require('../coach-service');
+const { timingStats, recordFingerprint, offsetAdvice, instantSummary, retryStreak, fatigueAdvice } = require('../coach-service');
 
 test.after(() => {
   if (path.dirname(testDataDir) === os.tmpdir() && path.basename(testDataDir).startsWith('tosu-ai-coach-tests-')) {
@@ -49,4 +49,15 @@ test('instantSummary transforme un abandon en apprentissage', () => {
   const text = instantSummary(completed({ completion: 'abandoned', progressPercent: 42 }), null);
   assert.match(text, /42%/);
   assert.match(text, /données|revanche/);
+});
+
+test('retryStreak compte les abandons consécutifs de la même map', () => {
+  const records = [completed({ beatmapId: 3, completion: 'abandoned' }), completed({ beatmapId: 7, completion: 'abandoned' }), completed({ beatmapId: 7, completion: 'failed' })];
+  assert.equal(retryStreak(records, 7), 2);
+});
+
+test('fatigueAdvice signale une baisse nette, pas une variation minime', () => {
+  const records = [completed({ accuracy: 97, timing: { average: 0, unstableRate: 100 } }), completed({ accuracy: 96, timing: { average: 0, unstableRate: 115 } }), completed({ accuracy: 94, timing: { average: 0, unstableRate: 135 } })];
+  assert.ok(fatigueAdvice(records));
+  assert.equal(fatigueAdvice([completed(), completed(), completed()]), null);
 });

@@ -163,6 +163,26 @@ function offsetAdvice(records) {
   };
 }
 
+function retryStreak(records, beatmapId) {
+  let streak = 0;
+  for (const record of [...records].reverse()) {
+    if (record.beatmapId !== beatmapId || record.completion === 'finished') break;
+    streak++;
+  }
+  return streak;
+}
+
+function fatigueAdvice(records) {
+  const recent = records.filter(record => record.completion === 'finished').slice(-3);
+  if (recent.length < 3) return null;
+  const first = recent[0];
+  const last = recent[recent.length - 1];
+  const accuracyDrop = Number(first.accuracy) - Number(last.accuracy);
+  const urRise = Number(last.timing?.unstableRate) - Number(first.timing?.unstableRate);
+  if (accuracyDrop < 2 && urRise < 25) return null;
+  return { accuracyDrop: Math.round(accuracyDrop * 100) / 100, urRise: Math.round(urRise * 10) / 10 };
+}
+
 function makeRecord(data, completion = 'finished') {
   const result = data.resultsScreen || {};
   const play = data.play || {};
@@ -205,6 +225,8 @@ function makeRecord(data, completion = 'finished') {
 
 function instantSummary(record, previous) {
   if (record.completion !== 'finished') {
+    if (record.progressPercent >= 90) return `À ${record.progressPercent}%, quitter c’est presque une performance artistique : je comprends, ce score aurait fait trop peur au classement. On garde la leçon et on revient le chercher.`;
+    if (record.retryStreak >= 5) return `${record.retryStreak}e tentative sur cette map : à ce stade ce n’est plus de l’entêtement, c’est une relation toxique. Fais une pause ou change de map, le cerveau te remerciera.`;
     const jokes = record.completion === 'failed'
       ? ['La barre de vie a posé sa démission sans préavis.', 'Le retry vient officiellement de devenir ton meilleur ami.', 'La map t’a rendu à l’accueil avec accusé de réception.', 'On avait demandé un FC, pas une démonstration de gravité.', 'Ton curseur était présent, son avocat beaucoup moins.', 'Le rythme t’a vu arriver et a changé les serrures.']
       : ['Retraite stratégique validée, personne ne dira ragequit devant les témoins.', 'Tu as quitté la map avant qu’elle puisse déposer plainte.', 'Cette tentative rejoint discrètement le programme de protection des runs.', 'Le bouton Échap vient de gagner un point de performance.', 'On appellera ça une reconnaissance du terrain très, très prudente.', 'La map continue sans toi, elle devrait s’en remettre.'];
@@ -225,7 +247,7 @@ function instantSummary(record, previous) {
 
 function promptFor(record, recent) {
   const language = resolveLanguage();
-  return `Tu es le pote-coach osu! du joueur. Réponds obligatoirement en ${languageName(language)} (${language}), même si les données sont dans une autre langue. Tu parles comme un bon ami : naturel, énergique, un peu cynique, avec de la déconne et du chambrage affectueux, jamais méchant ni humiliant. Une mauvaise partie n'est jamais un échec : c'est une source d'information. Commence TOUJOURS par saluer un progrès, même minuscule, ou à défaut un élément utile appris pendant cette partie. Compare intelligemment avec l'historique, surtout la même beatmap si disponible, sans inventer de progrès absent des données. Si completion vaut "failed" ou "abandoned", constate qu'il n'a pas fini et invente un chambrage original lié à la map, au score ou aux statistiques. Varie les thèmes et les formulations : n'utilise pas systématiquement "skill issue", le sapin, le bouton retry ou la barre de vie. Ne traite pas l'accuracy partielle comme un score final. Ensuite donne 1 ou 2 conseils très concrets pour la prochaine tentative. Si offsetAdvice existe, mentionne exactement le changement d'offset universel proposé et précise que c'est un essai prudent ; sinon, ne parle jamais de modifier l'offset. Évite le ton tableau Excel, les banalités et les diagnostics médicaux. Réponse sans markdown, 500 caractères maximum. Distingue aim, speed, reading, timing et endurance seulement si les données le justifient. Partie: ${JSON.stringify(record)}. Historique récent: ${JSON.stringify(recent.slice(-10))}`;
+  return `Tu es le pote-coach osu! du joueur. Réponds obligatoirement en ${languageName(language)} (${language}), même si les données sont dans une autre langue. Tu parles comme un bon ami : naturel, énergique, un peu cynique, avec de la déconne et du chambrage affectueux, jamais méchant ni humiliant. Une mauvaise partie n'est jamais un échec : c'est une source d'information. Commence TOUJOURS par saluer un progrès, même minuscule, ou à défaut un élément utile appris pendant cette partie. Compare intelligemment avec l'historique, surtout la même beatmap si disponible, sans inventer de progrès absent des données. Si completion vaut "failed" ou "abandoned", constate qu'il n'a pas fini et invente un chambrage original lié au contexte. Si progressPercent vaut 90 ou plus, reconnais qu'abandonner si près de la fin peut éviter d'enregistrer un score douloureux, avec une blague adaptée. Si retryStreak vaut 5 ou plus, conseille de sortir de cette boucle et de faire une pause ou changer de map, avec une formule drôle. Si fatigueAdvice existe, suggère naturellement une pause courte, de l'eau ou de bouger un peu ; ce n'est pas un diagnostic. Varie les thèmes et les formulations. Ne traite pas l'accuracy partielle comme un score final. Ensuite donne 1 ou 2 conseils très concrets. Si offsetAdvice existe, mentionne exactement le changement d'offset proposé et précise que c'est un essai prudent ; sinon, ne parle jamais d'offset. Réponse sans markdown, maximum 500 caractères. Partie: ${JSON.stringify(record)}. Historique récent: ${JSON.stringify(recent.slice(-10))}. Données de fatigue: ${JSON.stringify(record.fatigueAdvice || null)}`;
 }
 
 function runProcess(executable, args, timeoutMs = 60000, stdinText = '') {
@@ -286,6 +308,8 @@ async function analyze(data, completion = 'finished') {
   const records = history();
   const previous = records.length ? records[records.length - 1] : null;
   record.offsetAdvice = offsetAdvice([...records, record]);
+  record.retryStreak = completion === 'finished' ? 0 : retryStreak(records, record.beatmapId) + 1;
+  record.fatigueAdvice = fatigueAdvice([...records, record]);
   records.push(record);
   saveHistory(records);
   const visibleMs = (Number(config().display_seconds) || 45) * 1000;
@@ -412,4 +436,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { timingStats, recordFingerprint, offsetAdvice, instantSummary, makeRecord };
+module.exports = { timingStats, recordFingerprint, offsetAdvice, instantSummary, makeRecord, retryStreak, fatigueAdvice };
