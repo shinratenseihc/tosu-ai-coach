@@ -1,5 +1,6 @@
 const card=document.getElementById('coach');
 const provider=document.getElementById('provider');
+const label=document.getElementById('label');
 const map=document.getElementById('map');
 const stats=document.getElementById('stats');
 const report=document.getElementById('report');
@@ -8,6 +9,8 @@ async function refresh(){
   try{
     const state=await fetch('http://127.0.0.1:24051/state',{cache:'no-store'}).then(r=>r.json());
     const visible=Boolean(state.record);
+    const labels={fr:'COACH IA',en:'AI COACH',de:'KI-COACH',es:'COACH IA',it:'COACH IA',pt:'COACH IA',ja:'AIコーチ',ko:'AI 코치',zh:'AI教练'};
+    label.textContent=labels[state.language]||labels.en;
     card.classList.toggle('hidden',!visible);
     if(!visible||state.updatedAt===lastUpdate)return;
     lastUpdate=state.updatedAt;

@@ -11,7 +11,7 @@ const STATE_PATH = path.join(DATA_DIR, 'last-state.json');
 const LOG_DIR = path.join(DATA_DIR, 'logs');
 const LOG_PATH = path.join(LOG_DIR, 'coach.log');
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-const DEFAULT_CONFIG = { provider: 'auto', claude_first: true, history_limit: 2000, tosu_url: 'http://127.0.0.1:24050', coach_port: 24051 };
+const DEFAULT_CONFIG = { provider: 'auto', claude_first: true, language: 'auto', history_limit: 2000, tosu_url: 'http://127.0.0.1:24050', coach_port: 24051 };
 
 function findExecutable(command, candidates = []) {
   for (const candidate of candidates) if (candidate && fs.existsSync(candidate)) return candidate;
@@ -58,6 +58,17 @@ function config() {
 
 function tosuApiUrl() {
   return `${String(config().tosu_url || DEFAULT_CONFIG.tosu_url).replace(/\/$/, '')}/json/v2`;
+}
+
+function resolveLanguage() {
+  const configured = String(config().language || 'auto').toLowerCase();
+  if (configured !== 'auto') return configured.split(/[-_]/)[0];
+  const detected = (Intl.DateTimeFormat().resolvedOptions().locale || process.env.LANG || 'en').toLowerCase();
+  return detected.split(/[-_]/)[0];
+}
+
+function languageName(code) {
+  return ({ fr: 'français', en: 'anglais', de: 'allemand', es: 'espagnol', it: 'italien', pt: 'portugais', nl: 'néerlandais', pl: 'polonais', tr: 'turc', ru: 'russe', uk: 'ukrainien', ja: 'japonais', ko: 'coréen', zh: 'chinois' })[code] || 'anglais';
 }
 
 function log(message) {
@@ -213,7 +224,8 @@ function instantSummary(record, previous) {
 }
 
 function promptFor(record, recent) {
-  return `Tu es le pote-coach osu! francophone du joueur. Tu parles comme un bon ami : naturel, énergique, un peu cynique, avec de la déconne et du chambrage affectueux, jamais méchant ni humiliant. Une mauvaise partie n'est jamais un échec : c'est une source d'information. Commence TOUJOURS par saluer un progrès, même minuscule, ou à défaut un élément utile appris pendant cette partie. Compare intelligemment avec l'historique, surtout la même beatmap si disponible, sans inventer de progrès absent des données. Si completion vaut "failed" ou "abandoned", constate qu'il n'a pas fini et invente un chambrage original lié à la map, au score ou aux statistiques. Varie les thèmes et les formulations : n'utilise pas systématiquement "skill issue", le sapin, le bouton retry ou la barre de vie. Ne traite pas l'accuracy partielle comme un score final. Ensuite donne 1 ou 2 conseils très concrets pour la prochaine tentative. Si offsetAdvice existe, mentionne exactement le changement d'offset universel proposé et précise que c'est un essai prudent ; sinon, ne parle jamais de modifier l'offset. Évite le ton tableau Excel, les banalités et les diagnostics médicaux. Réponse sans markdown, 500 caractères maximum. Distingue aim, speed, reading, timing et endurance seulement si les données le justifient. Partie: ${JSON.stringify(record)}. Historique récent: ${JSON.stringify(recent.slice(-10))}`;
+  const language = resolveLanguage();
+  return `Tu es le pote-coach osu! du joueur. Réponds obligatoirement en ${languageName(language)} (${language}), même si les données sont dans une autre langue. Tu parles comme un bon ami : naturel, énergique, un peu cynique, avec de la déconne et du chambrage affectueux, jamais méchant ni humiliant. Une mauvaise partie n'est jamais un échec : c'est une source d'information. Commence TOUJOURS par saluer un progrès, même minuscule, ou à défaut un élément utile appris pendant cette partie. Compare intelligemment avec l'historique, surtout la même beatmap si disponible, sans inventer de progrès absent des données. Si completion vaut "failed" ou "abandoned", constate qu'il n'a pas fini et invente un chambrage original lié à la map, au score ou aux statistiques. Varie les thèmes et les formulations : n'utilise pas systématiquement "skill issue", le sapin, le bouton retry ou la barre de vie. Ne traite pas l'accuracy partielle comme un score final. Ensuite donne 1 ou 2 conseils très concrets pour la prochaine tentative. Si offsetAdvice existe, mentionne exactement le changement d'offset universel proposé et précise que c'est un essai prudent ; sinon, ne parle jamais de modifier l'offset. Évite le ton tableau Excel, les banalités et les diagnostics médicaux. Réponse sans markdown, 500 caractères maximum. Distingue aim, speed, reading, timing et endurance seulement si les données le justifient. Partie: ${JSON.stringify(record)}. Historique récent: ${JSON.stringify(recent.slice(-10))}`;
 }
 
 function runProcess(executable, args, timeoutMs = 60000, stdinText = '') {
@@ -343,7 +355,7 @@ function pollTosu() {
 const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  if (req.url === '/state') return res.end(JSON.stringify(state));
+  if (req.url === '/state') return res.end(JSON.stringify({ ...state, language: resolveLanguage() }));
   if (req.url === '/history') return res.end(JSON.stringify(history()));
   if (req.url === '/preview') {
     if (!state.record) {
