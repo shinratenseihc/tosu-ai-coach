@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const testDataDir = path.join(os.tmpdir(), `tosu-ai-coach-tests-${process.pid}`);
 process.env.TOSU_COACH_DATA_DIR = testDataDir;
-const { timingStats, recordFingerprint, offsetAdvice, instantSummary, retryStreak, fatigueAdvice } = require('../coach-service');
+const { timingStats, recordFingerprint, offsetAdvice, instantSummary, retryStreak, fatigueAdvice, sessionTransition, sessionSummary, previousMapResult, bestMapResult, makeLiveRecord, mapStartSummary, removeUnscheduledBreakAdvice, sessionMemory, splitSessions, summarizeSession, progressByDay, personalityInstruction, warmupRecommendations, displayDeadline, coachingKnowledge } = require('../coach-service');
 
 test.after(() => {
   if (path.dirname(testDataDir) === os.tmpdir() && path.basename(testDataDir).startsWith('tosu-ai-coach-tests-')) {
@@ -57,7 +57,130 @@ test('retryStreak compte les abandons consécutifs de la même map', () => {
 });
 
 test('fatigueAdvice signale une baisse nette, pas une variation minime', () => {
-  const records = [completed({ accuracy: 97, timing: { average: 0, unstableRate: 100 } }), completed({ accuracy: 96, timing: { average: 0, unstableRate: 115 } }), completed({ accuracy: 94, timing: { average: 0, unstableRate: 135 } })];
+  const records = [completed({ timestamp: '2026-07-20T10:00:00Z', accuracy: 97, timing: { average: 0, unstableRate: 100 } }), completed({ timestamp: '2026-07-20T10:15:00Z', accuracy: 96, timing: { average: 0, unstableRate: 115 } }), completed({ timestamp: '2026-07-20T10:31:00Z', accuracy: 94, timing: { average: 0, unstableRate: 135 } })];
   assert.ok(fatigueAdvice(records));
   assert.equal(fatigueAdvice([completed(), completed(), completed()]), null);
+});
+
+test('fatigueAdvice bloque les conseils rapprochés pendant le cooldown', () => {
+  const records = [
+    completed({ timestamp: '2026-07-20T10:00:00Z', accuracy: 98, fatigueAdvice: { reason: 'performance_drop' } }),
+    completed({ timestamp: '2026-07-20T10:15:00Z', accuracy: 96 }),
+    completed({ timestamp: '2026-07-20T10:25:00Z', accuracy: 93 }),
+  ];
+  assert.equal(fatigueAdvice(records), null);
+});
+
+test('fatigueAdvice suggère une pause après quinze minutes et six échecs', () => {
+  const records = [0, 3, 6, 9, 12, 16].map(minutes => completed({ timestamp: `2026-07-20T10:${String(minutes).padStart(2, '0')}:00Z`, completion: 'failed' }));
+  assert.equal(fatigueAdvice(records).reason, 'failure_streak');
+});
+
+test('offsetAdvice demande un check après trois maps distinctes early', () => {
+  const records = [1, 2, 3].map((beatmapId, index) => completed({ beatmapId, score: 2000 + index, timing: { average: -11 - index, unstableRate: 110 } }));
+  const advice = offsetAdvice(records);
+  assert.equal(advice.type, 'check');
+  assert.equal(advice.direction, 'early');
+});
+
+test('sessionTransition détecte une reprise après 90 minutes', () => {
+  const records = [
+    completed({ timestamp: '2026-07-20T08:00:00.000Z' }),
+    completed({ timestamp: '2026-07-20T08:30:00.000Z' }),
+  ];
+  assert.equal(sessionTransition(records, new Date('2026-07-20T09:59:59.000Z'), 90), null);
+  const transition = sessionTransition(records, new Date('2026-07-20T10:00:00.000Z'), 90);
+  assert.equal(transition.session.length, 2);
+  assert.equal(transition.newDay, false);
+});
+
+test('sessionSummary résume la session précédente et choisit une priorité', () => {
+  const records = [
+    completed({ timestamp: '2026-07-19T18:00:00.000Z', accuracy: 94, misses: 7 }),
+    completed({ timestamp: '2026-07-19T18:20:00.000Z', accuracy: 96, misses: 5 }),
+  ];
+  const recap = sessionSummary(records, new Date('2026-07-20T08:00:00.000Z'), 90);
+  assert.equal(recap.newDay, true);
+  assert.match(recap.report, /Nouvelle journée/);
+  assert.match(recap.report, /95\.00% moy\./);
+  assert.match(recap.focus, /régularité|aim/);
+});
+
+test('previousMapResult retrouve le dernier score terminé de la même difficulté', () => {
+  const records = [
+    completed({ beatmapId: 4, accuracy: 93 }),
+    completed({ beatmapId: 4, accuracy: 94, completion: 'abandoned' }),
+    completed({ beatmapId: 9, accuracy: 98 }),
+    completed({ beatmapId: 4, accuracy: 96 }),
+  ];
+  assert.equal(previousMapResult(records, 4).accuracy, 96);
+  assert.equal(previousMapResult(records, 7), null);
+});
+
+test('bestMapResult retient le score le plus élevé de la difficulté', () => {
+  const records = [completed({ beatmapId: 4, score: 3000, accuracy: 94 }), completed({ beatmapId: 4, score: 9000, accuracy: 96 }), completed({ beatmapId: 4, score: 5000, accuracy: 98 })];
+  assert.equal(bestMapResult(records, 4).score, 9000);
+});
+
+test('mapStartSummary affiche la référence précédente', () => {
+  const data = { beatmap: { id: 4, artist: 'Test', title: 'Map', version: 'Insane', stats: { stars: { total: 4.2 }, bpm: { common: 180 }, maxCombo: 500 } }, play: {} };
+  const live = makeLiveRecord(data, completed({ beatmapId: 4, accuracy: 96.5, misses: 2, combo: 450, maxCombo: 500 }));
+  assert.equal(live.phase, 'playing');
+  assert.match(mapStartSummary(live), /96\.50%/);
+  assert.match(mapStartSummary(live), /2 miss/);
+  assert.match(mapStartSummary(live, { comfortableStars: 3.5 }), /Défi/);
+  assert.match(mapStartSummary(live, { comfortableStarsMin: 4.0, comfortableStarsMax: 4.5 }), /zone confort/);
+});
+
+test('removeUnscheduledBreakAdvice bloque les pauses non déclenchées', () => {
+  const filtered = removeUnscheduledBreakAdvice('Ton aim progresse. Bois un peu et repose tes poignets. Travaille les bursts à 180 BPM.');
+  assert.equal(filtered, 'Ton aim progresse. Travaille les bursts à 180 BPM.');
+});
+
+test('splitSessions sépare les reprises éloignées', () => {
+  const records = [
+    completed({ timestamp: '2026-07-20T10:00:00Z' }),
+    completed({ timestamp: '2026-07-20T10:30:00Z' }),
+    completed({ timestamp: '2026-07-20T12:01:00Z' }),
+  ];
+  assert.deepEqual(splitSessions(records, 90).map(session => session.length), [2, 1]);
+});
+
+test('summarizeSession calcule un bilan compact', () => {
+  const summary = summarizeSession([
+    completed({ timestamp: '2026-07-20T10:00:00Z', beatmapId: 1, accuracy: 94, misses: 4 }),
+    completed({ timestamp: '2026-07-20T10:20:00Z', beatmapId: 2, accuracy: 96, misses: 2 }),
+  ]);
+  assert.equal(summary.runs, 2);
+  assert.equal(summary.uniqueMaps, 2);
+  assert.equal(summary.averageAccuracy, 95);
+});
+
+test('progressByDay produit les jours vides et les moyennes', () => {
+  const data = progressByDay([completed({ timestamp: '2026-07-20T10:00:00Z', accuracy: 96 })], 2, new Date('2026-07-20T20:00:00Z'));
+  assert.equal(data.length, 2);
+  assert.equal(data.at(-1).accuracy, 96);
+});
+
+test('les personnalités produisent des consignes distinctes', () => {
+  assert.match(personalityInstruction('analyst'), /factuel|données/);
+  assert.notEqual(personalityInstruction('analyst'), personalityInstruction('sarcastic'));
+});
+
+test('warmupRecommendations propose trois maps uniques dans la zone confort', () => {
+  const records = [4.5, 4.8, 5.15, 5.8].map((stars, index) => completed({ beatmapId: index + 1, setId: 100 + index, stars, score: 1000 + index, artist: 'A', title: `Map ${index}`, difficulty: 'Insane', bpm: 180 }));
+  const maps = warmupRecommendations(records, { comfortableStarsMin: 4.5, comfortableStarsMax: 5.2 });
+  assert.equal(maps.length, 3);
+  assert.ok(maps.every(map => map.stars >= 4.5 && map.stars <= 5.2));
+});
+
+test('displayDeadline utilise une durée temporisée', () => {
+  const before = Date.now() + 19000;
+  const deadline = displayDeadline(20);
+  assert.ok(deadline >= before && deadline <= Date.now() + 21000);
+});
+
+test('la base de connaissances distingue UR et biais de timing', () => {
+  assert.match(coachingKnowledge(), /UR.*régularité/);
+  assert.match(coachingKnowledge(), /early\/late/);
 });

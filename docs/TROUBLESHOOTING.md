@@ -1,5 +1,16 @@
 # Dépannage
 
+## Aucun rapport IA
+
+Le coach nécessite Codex CLI ou Claude Code installé **et connecté**. Un MCP n’est ni requis ni utilisé.
+
+```powershell
+.\scripts\doctor.ps1
+node coach-service.js --test-providers
+```
+
+Si Codex échoue, lance `codex` et termine la connexion ChatGPT. Si Claude échoue, lance `claude` et termine la connexion Claude.ai ou Anthropic Console. Vérifie également la connexion Internet et le quota du forfait.
+
 Commence par `scripts\doctor.ps1`.
 
 ## Overlay absent

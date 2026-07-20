@@ -8,16 +8,18 @@ let lastUpdate=0;
 async function refresh(){
   try{
     const state=await fetch('http://127.0.0.1:24051/state',{cache:'no-store'}).then(r=>r.json());
-    const visible=Boolean(state.record);
+    const visible=state.gameStatus!=='offline'&&Boolean(state.record)&&(state.displayMode==='always'||state.status==='analyzing'||Date.now()<Number(state.visibleUntil||0));
     const labels={fr:'COACH IA',en:'AI COACH',de:'KI-COACH',es:'COACH IA',it:'COACH IA',pt:'COACH IA',ja:'AIコーチ',ko:'AI 코치',zh:'AI教练'};
-    label.textContent=labels[state.language]||labels.en;
+    label.textContent=state.coachName||labels[state.language]||labels.en;
     card.classList.toggle('hidden',!visible);
     if(!visible||state.updatedAt===lastUpdate)return;
     lastUpdate=state.updatedAt;
     const r=state.record;
     provider.textContent=state.status==='analyzing'?'Analyse en cours…':(state.provider||'Analyse locale');
     map.textContent=`${r.artist} — ${r.title} [${r.difficulty}]`;
-    stats.textContent=`${Number(r.stars).toFixed(2)}★  •  ${Number(r.accuracy).toFixed(2)}%  •  ${r.misses} miss  •  ${r.combo}/${r.maxCombo}x  •  UR ${r.timing.unstableRate}`;
+    stats.textContent=r.phase==='playing'
+      ?`${Number(r.stars).toFixed(2)}★  •  ${Number(r.bpm).toFixed(0)} BPM  •  ${r.mods||'NoMod'}  •  max ${r.maxCombo}x`
+      :`${Number(r.stars).toFixed(2)}★  •  ${Number(r.accuracy).toFixed(2)}%  •  ${r.misses} miss  •  ${r.combo}/${r.maxCombo}x  •  UR ${r.timing.unstableRate}`;
     report.textContent=state.report;
   }catch{card.classList.add('hidden')}
 }

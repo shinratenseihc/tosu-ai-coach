@@ -50,10 +50,17 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'start-coach.vbs') -Destination $
 Copy-Item -LiteralPath (Join-Path $projectRoot 'config.example.json') -Destination $InstallDir -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination $InstallDir -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination $InstallDir -Force
+$installedDocs = Join-Path $InstallDir 'docs'
+New-Item -ItemType Directory -Path $installedDocs -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\COACHING_KNOWLEDGE.md') -Destination $installedDocs -Force
 
 $installedCounter = Join-Path $InstallDir 'counter'
 New-Item -ItemType Directory -Path $installedCounter -Force | Out-Null
 Copy-Item -Path (Join-Path $projectRoot 'counter\*') -Destination $installedCounter -Recurse -Force
+
+$installedDashboard = Join-Path $InstallDir 'dashboard'
+New-Item -ItemType Directory -Path $installedDashboard -Force | Out-Null
+Copy-Item -Path (Join-Path $projectRoot 'dashboard\*') -Destination $installedDashboard -Recurse -Force
 
 $tosuCounter = Join-Path $tosuStatic 'Coach IA by Shinra'
 New-Item -ItemType Directory -Path $tosuCounter -Force | Out-Null
