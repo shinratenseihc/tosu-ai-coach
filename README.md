@@ -17,6 +17,7 @@ Il fonctionne avec **Claude CLI et/ou Codex CLI, sans clé API développeur**. I
 - Recommandation prudente d’offset avec suffisamment de données cohérentes.
 - Annulation de la génération si une nouvelle map commence.
 - Bascule automatique entre Claude et Codex.
+- Réponse dans la langue de Windows, avec possibilité de forcer une langue.
 - Overlay portrait 9:16 permanent.
 - Données privées dans `%LOCALAPPDATA%\TosuAICoach`.
 
@@ -67,13 +68,15 @@ Dans `%LOCALAPPDATA%\TosuAICoach\config.json` :
 ```json
 {
   "provider": "auto",
-  "claude_first": true
+  "claude_first": true,
+  "language": "auto"
 }
 ```
 
 - `auto` essaie les deux fournisseurs dans l’ordre choisi.
 - `claude` utilise uniquement Claude CLI.
 - `codex` utilise uniquement Codex CLI.
+- `language: auto` suit la langue de Windows ; une valeur comme `fr`, `en`, `de` ou `ja` force la langue des réponses.
 
 Les exécutables sont détectés automatiquement. `CLAUDE_PATH` et `CODEX_PATH` permettent de forcer un chemin.
 
