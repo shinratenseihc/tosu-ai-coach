@@ -25,6 +25,7 @@ lib/coaching.js        Personnalités, connaissances et construction du prompt
 lib/stats.js           Timing, offset, fatigue et références de score
 lib/storage.js         Configuration cachée, historique, état et migrations
 lib/game-monitor.js    Processus osu!, polling TOSU et transitions de partie
+lib/server.js          Serveur HTTP, routes API et dashboard statique
 counter/               Overlay web TOSU
 scripts/               Installation et diagnostic Windows
 tests/                 Tests Node natifs

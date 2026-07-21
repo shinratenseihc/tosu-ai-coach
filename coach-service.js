@@ -1,5 +1,4 @@
 const { spawn } = require('node:child_process');
-const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const osuApi = require('./osu-api.js');
@@ -8,6 +7,7 @@ const { buildPrompt, coachingKnowledge, personalityInstruction, removeUnschedule
 const stats = require('./lib/stats.js');
 const { createStorage } = require('./lib/storage.js');
 const { createGameMonitor } = require('./lib/game-monitor.js');
+const { createCoachServer } = require('./lib/server.js');
 
 const ROOT = __dirname;
 const DASHBOARD_DIR = path.join(ROOT, 'dashboard');
@@ -763,114 +763,36 @@ const gameMonitor = createGameMonitor({
   },
 });
 
-function readRequestJson(req, maxBytes = 65536) {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', chunk => {
-      body += chunk;
-      if (Buffer.byteLength(body) > maxBytes) reject(new Error('Requête trop volumineuse'));
-    });
-    req.on('end', () => {
-      try { resolve(body ? JSON.parse(body) : {}); } catch { reject(new Error('JSON invalide')); }
-    });
-    req.on('error', reject);
-  });
-}
-
-function serveDashboard(pathname, res) {
-  const files = { '/': 'index.html', '/dashboard': 'index.html', '/dashboard/': 'index.html', '/dashboard/app.js': 'app.js', '/dashboard/personality-options.js': 'personality-options.js', '/dashboard/styles.css': 'styles.css' };
-  const name = files[pathname];
-  if (!name) return false;
-  const file = path.join(DASHBOARD_DIR, name);
-  if (!fs.existsSync(file)) return false;
-  res.setHeader('Content-Type', name.endsWith('.js') ? 'text/javascript; charset=utf-8' : name.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/html; charset=utf-8');
-  res.end(fs.readFileSync(file));
-  return true;
-}
-
-const server = http.createServer(async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  const requestUrl = new URL(req.url, 'http://127.0.0.1');
-  const pathname = requestUrl.pathname;
-  if (req.method === 'GET' && serveDashboard(pathname, res)) return;
-  if (pathname === '/api/dashboard/heartbeat' && req.method === 'POST') {
+const server = createCoachServer({
+  dashboardDir: DASHBOARD_DIR,
+  getConfig: config,
+  updateConfig: input => {
+    const next = updatePublicConfig(input);
+    log('Profil joueur mis à jour depuis le tableau de bord');
+    return next;
+  },
+  syncOsuProfile,
+  getSessions: requestedLimit => {
+    const limit = Math.max(1, Math.min(50, Number(requestedLimit) || 10));
+    return splitSessions(history(), config().session_gap_minutes).slice(-limit).reverse().map(summarizeSession);
+  },
+  getProgress: days => progressByDay(history(), days),
+  getWarmup: () => warmupRecommendations(history()),
+  getState: () => state,
+  setState: next => { state = next; },
+  getGameStatus: () => gameStatus,
+  resolveLanguage,
+  getHistory: history,
+  instantSummary,
+  analyzeCurrent: () => {
+    fetch(tosuApiUrl()).then(response => response.json()).then(data => analyze(data)).catch(error => log(`Analyse manuelle: ${error.message}`));
+  },
+  dashboardHeartbeat: () => {
     if (Date.now() - dashboardLastSeenAt >= 12000) log('Dashboard actif : heartbeat reçu');
     dashboardLastSeenAt = Date.now();
-    return res.end(JSON.stringify({ ok: true }));
-  }
-  if (pathname === '/api/config' && req.method === 'GET') {
-    const { osu_client_secret, ...publicConfig } = config();
-    return res.end(JSON.stringify({ ...publicConfig, osu_client_secret: '', osu_client_secret_set: Boolean(String(osu_client_secret || '').trim()) }));
-  }
-  if (pathname === '/api/config' && req.method === 'POST') {
-    try {
-      const next = updatePublicConfig(await readRequestJson(req));
-      log('Profil joueur mis à jour depuis le tableau de bord');
-      const { osu_client_secret, ...publicNext } = next;
-      return res.end(JSON.stringify({ ok: true, config: { ...publicNext, osu_client_secret: '', osu_client_secret_set: Boolean(String(osu_client_secret || '').trim()) } }));
-    } catch (error) {
-      res.statusCode = 400;
-      return res.end(JSON.stringify({ error: error.message }));
-    }
-  }
-  if (pathname === '/api/osu/sync' && req.method === 'POST') {
-    try {
-      const profile = await syncOsuProfile();
-      return res.end(JSON.stringify({ ok: true, profile }));
-    } catch (error) {
-      res.statusCode = 502;
-      return res.end(JSON.stringify({ error: error.message }));
-    }
-  }
-  if (pathname === '/api/sessions' && req.method === 'GET') {
-    const limit = Math.max(1, Math.min(50, Number(requestUrl.searchParams.get('limit')) || 10));
-    const sessions = splitSessions(history(), config().session_gap_minutes).slice(-limit).reverse().map(summarizeSession);
-    return res.end(JSON.stringify(sessions));
-  }
-  if (pathname === '/api/progress' && req.method === 'GET') return res.end(JSON.stringify(progressByDay(history(), requestUrl.searchParams.get('days'))));
-  if (pathname === '/api/warmup' && req.method === 'GET') return res.end(JSON.stringify(warmupRecommendations(history())));
-  if (pathname === '/state') {
-    const cfg = config();
-    const rawOpacity = Number(cfg.overlay_background_opacity);
-    const backgroundOpacity = cfg.overlay_show_background === false ? 0 : Math.max(0, Math.min(100, Number.isFinite(rawOpacity) ? Math.round(rawOpacity) : 100));
-    return res.end(JSON.stringify({ ...state, language: resolveLanguage(), coachName: cfg.coach_name || 'Coach IA', gameStatus, displayMode: cfg.display_mode || 'timed', displaySeconds: Number(cfg.display_seconds) || 20, overlay: { accentColor: /^#[0-9a-f]{6}$/i.test(String(cfg.overlay_accent_color || '')) ? String(cfg.overlay_accent_color).toLowerCase() : '#ff66aa', backgroundOpacity, showBackground: backgroundOpacity > 0, showLogo: cfg.overlay_show_logo !== false } }));
-  }
-  if (pathname === '/history') return res.end(JSON.stringify(history()));
-  if (pathname === '/preview') {
-    if (!state.record) {
-      const records = history();
-      const record = records.at(-1);
-      if (!record) {
-        res.statusCode = 409;
-        return res.end(JSON.stringify({ error: 'Aucun rapport disponible' }));
-      }
-      state = {
-        status: 'ready',
-        report: instantSummary(record, records.at(-2)),
-        provider: 'Aperçu local',
-        record,
-        visibleUntil: 0,
-        updatedAt: Date.now(),
-      };
-    }
-    state = { ...state, visibleUntil: Date.now() + 60000, updatedAt: Date.now() };
-    log('Aperçu du dernier rapport pendant 60 secondes');
-    return res.end(JSON.stringify({ visible: true, visibleUntil: state.visibleUntil }));
-  }
-  if (pathname === '/analyze-current') {
-    fetch(tosuApiUrl())
-      .then(response => response.json())
-      .then(data => analyze(data))
-      .catch(error => log(`Analyse manuelle: ${error.message}`));
-    res.statusCode = 202;
-    return res.end(JSON.stringify({ accepted: true }));
-  }
-  res.statusCode = 404;
-  res.end(JSON.stringify({ error: 'not found' }));
+  },
+  log,
 });
-
-server.on('error', error => { log(`Serveur: ${error.message}`); process.exitCode = 1; });
 
 function main() {
   if (process.argv.includes('--test-providers')) {
