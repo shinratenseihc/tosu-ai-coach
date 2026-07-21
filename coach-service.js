@@ -14,7 +14,7 @@ const DASHBOARD_DIR = path.join(ROOT, 'dashboard');
 const LOG_DIR = path.join(DATA_DIR, 'logs');
 const LOG_PATH = path.join(LOG_DIR, 'coach.log');
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-const DEFAULT_CONFIG = { provider: 'auto', claude_first: true, language: 'auto', coach_name: 'Coach IA', personality: 'balanced', display_mode: 'timed', display_seconds: 20, overlay_accent_color: '#ff66aa', overlay_show_background: true, overlay_background_opacity: 100, overlay_show_logo: true, history_limit: 2000, session_gap_minutes: 90, pause_cooldown_minutes: 60, failure_pause_minutes: 15, failure_pause_attempts: 6, performance_pause_minutes: 30, max_report_chars: 350, comfortable_stars: null, comfortable_stars_min: null, comfortable_stars_max: null, goals: [], weaknesses: [], current_rank: null, rank_goal: null, rank_region: '', osu_integration_enabled: false, osu_username: '', osu_client_id: '', osu_client_secret: '', osu_supporter: false, allow_online_recommendations: false, allow_knowledge_updates: false, tosu_url: 'http://127.0.0.1:24050', coach_port: 24051 };
+const DEFAULT_CONFIG = { provider: 'auto', claude_first: true, language: 'auto', coach_name: 'Coach IA', personality: 'balanced', display_mode: 'timed', display_seconds: 20, overlay_accent_color: '#ff66aa', overlay_show_background: true, overlay_background_opacity: 100, overlay_show_logo: true, history_limit: 2000, session_gap_minutes: 90, pause_cooldown_minutes: 60, failure_pause_minutes: 15, failure_pause_attempts: 6, performance_pause_minutes: 30, max_report_chars: 1000, comfortable_stars: null, comfortable_stars_min: null, comfortable_stars_max: null, goals: [], weaknesses: [], current_rank: null, rank_goal: null, rank_region: '', osu_integration_enabled: false, osu_username: '', osu_client_id: '', osu_client_secret: '', osu_supporter: false, allow_online_recommendations: false, allow_knowledge_updates: false, tosu_url: 'http://127.0.0.1:24050', coach_port: 24051 };
 
 function findExecutable(command, candidates = []) {
   for (const candidate of candidates) if (candidate && fs.existsSync(candidate)) return candidate;
@@ -51,12 +51,16 @@ let busy = false;
 let lastFingerprint = '';
 let wasPlaying = false;
 let lastPlayData = null;
-let exitCandidate = null;
 let activeAiChild = null;
 let analysisGeneration = 0;
 let lastSessionNotice = '';
 let gameStatus = 'unknown';
 let pollFailures = 0;
+let cachedOsuProfile = null;
+let dashboardLastSeenAt = 0;
+let dashboardOpenTimer = null;
+let ignoreResultsUntilPlay = true;
+let processCheckRunning = false;
 
 let cachedConfig = null;
 let cachedConfigMtime = 0;
@@ -117,7 +121,7 @@ function updatePublicConfig(input) {
   }
   for (const key of lists) next[key] = Array.isArray(input[key]) ? input[key].map(value => String(value).trim()).filter(Boolean).slice(0, 12) : [];
   if (['auto', 'claude', 'codex'].includes(input.provider)) next.provider = input.provider;
-  if (['balanced', 'supportive', 'sarcastic', 'competitive', 'analyst'].includes(input.personality)) next.personality = input.personality;
+  if (['balanced', 'supportive', 'sarcastic', 'competitive', 'analyst', 'training_companion'].includes(input.personality)) next.personality = input.personality;
   if (['always', 'timed'].includes(input.display_mode)) next.display_mode = input.display_mode;
   if (input.display_seconds !== undefined) next.display_seconds = Math.max(5, Math.min(120, Number(input.display_seconds) || 20));
   if (typeof input.claude_first === 'boolean') next.claude_first = input.claude_first;
@@ -192,14 +196,12 @@ function sessionSummary(records, now = new Date(), gapMinutes = 90) {
   const average = key => scored.reduce((sum, record) => sum + Number(key(record) || 0), 0) / Math.max(1, scored.length);
   const avgAccuracy = average(record => record.accuracy);
   const avgMisses = average(record => record.misses);
-  const avgUr = average(record => record.timing?.unstableRate);
   const avgTiming = average(record => record.timing?.average);
   const completionRate = finished.length / runs.length;
   let focus = 'monter doucement la difficulté sans sacrifier la propreté';
   if (completionRate < 0.7) focus = 'finir davantage de maps avant de pousser la difficulté';
   else if (avgMisses >= 5) focus = 'régularité et aim pour réduire les misses';
   else if (Math.abs(avgTiming) >= 8) focus = `timing ${avgTiming < 0 ? 'early' : 'late'} : recaler les frappes`;
-  else if (avgUr >= 140) focus = 'stabilité du rythme pour faire baisser l’UR';
   else if (avgAccuracy < 95) focus = 'précision : viser des hits plus propres';
   const label = transition.newDay ? 'Nouvelle journée' : 'Nouvelle session';
   return {
@@ -220,7 +222,7 @@ function showSessionRecap(now = new Date()) {
   const warmupText = warmup.length ? ` Échauffement : ${warmup.map(item => `${item.title} (${Number(item.stars).toFixed(2)}★)`).join(' → ')}.` : '';
   state = {
     status: 'ready',
-    report: `${recap.report}${warmupText}`.slice(0, Number(config().max_report_chars) || 350),
+    report: `${recap.report}${warmupText}`.slice(0, Number(config().max_report_chars) || 1000),
     provider: recap.newDay ? 'Objectif du jour' : 'Reprise de session',
     record: recap.latest,
     visibleUntil: displayDeadline(),
@@ -359,9 +361,8 @@ function fatigueAdvice(records, options = {}) {
   const first = recent[0];
   const last = recent[recent.length - 1];
   const accuracyDrop = Number(first.accuracy) - Number(last.accuracy);
-  const urRise = Number(last.timing?.unstableRate) - Number(first.timing?.unstableRate);
-  if (accuracyDrop < 2 && urRise < 25) return null;
-  return { reason: 'performance_drop', accuracyDrop: Math.round(accuracyDrop * 100) / 100, urRise: Math.round(urRise * 10) / 10 };
+  if (accuracyDrop < 2) return null;
+  return { reason: 'performance_drop', accuracyDrop: Math.round(accuracyDrop * 100) / 100 };
 }
 
 function makeRecord(data, completion = 'finished') {
@@ -455,17 +456,32 @@ function osuIntegrationReady(cfg = config()) {
 async function syncOsuProfile() {
   const cfg = config();
   if (!osuIntegrationReady(cfg)) throw new Error('intégration osu! non configurée : active-la et renseigne pseudo, client ID et secret');
+  const snapshots = readJson(PROFILE_HISTORY_PATH, []);
+  const previousOsu = [...snapshots].reverse().find(item => item.source === 'osu-sync') || null;
   const profile = await osuApi.fetchUser(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), String(cfg.osu_username).trim());
+  cachedOsuProfile = profile;
   const rank = pickRank(profile, cfg.rank_region);
   if (rank) {
     const next = { ...config(), current_rank: rank };
     saveConfig(next);
-    const snapshots = readJson(PROFILE_HISTORY_PATH, []);
-    snapshots.push({ timestamp: new Date().toISOString(), current_rank: next.current_rank, rank_goal: next.rank_goal, source: 'osu-sync' });
+    snapshots.push({ timestamp: new Date().toISOString(), current_rank: next.current_rank, rank_goal: next.rank_goal, global_rank: profile.globalRank, country_rank: profile.countryRank, pp: profile.pp, source: 'osu-sync' });
     fs.writeFileSync(PROFILE_HISTORY_PATH, `${JSON.stringify(snapshots.slice(-500), null, 2)}\n`, 'utf8');
   }
+  const progress = previousOsu ? {
+    globalRankGain: Number(previousOsu.global_rank) > Number(profile.globalRank) ? Number(previousOsu.global_rank) - Number(profile.globalRank) : 0,
+    countryRankGain: Number(previousOsu.country_rank) > Number(profile.countryRank) ? Number(previousOsu.country_rank) - Number(profile.countryRank) : 0,
+    ppGain: Number(profile.pp) > Number(previousOsu.pp) ? Number(profile.pp) - Number(previousOsu.pp) : 0,
+  } : { globalRankGain: 0, countryRankGain: 0, ppGain: 0 };
   log(`Profil osu! synchronisé : ${profile.username} (global #${profile.globalRank ?? '—'}, pays #${profile.countryRank ?? '—'})`);
-  return { ...profile, appliedRank: rank };
+  return { ...profile, appliedRank: rank, progress };
+}
+
+function profileProgressSummary(progress) {
+  const parts = [];
+  if (Number(progress?.ppGain) >= 0.05) parts.push(`+${Number(progress.ppGain).toFixed(1)}pp au total`);
+  if (Number(progress?.globalRankGain) > 0) parts.push(`${Number(progress.globalRankGain)} place${Number(progress.globalRankGain) > 1 ? 's' : ''} gagnée${Number(progress.globalRankGain) > 1 ? 's' : ''} au classement global`);
+  if (Number(progress?.countryRankGain) > 0) parts.push(`${Number(progress.countryRankGain)} place${Number(progress.countryRankGain) > 1 ? 's' : ''} gagnée${Number(progress.countryRankGain) > 1 ? 's' : ''} dans ton pays`);
+  return parts.length ? ` Progression osu! confirmée : ${parts.join(' et ')}. Ça se fête.` : '';
 }
 
 function personalityInstruction(value = config().personality) {
@@ -475,11 +491,12 @@ function personalityInstruction(value = config().personality) {
     sarcastic: 'Sarcastique affectueux : chambrage créatif plus présent, jamais humiliant, puis conseil utile.',
     competitive: 'Compétiteur direct : énergique, exigeant, phrases courtes, objectif mesurable et aucune excuse inutile.',
     analyst: 'Analyste calme : factuel, précis, peu de blagues, priorité aux tendances et aux données fiables.',
+    training_companion: 'Compagnon d’entraînement : ambiance de pote, fun et chambrage affectueux. Valorise la répétition, les bons passages et le plaisir de jouer ; peu de tracking chiffré, jamais de pression.',
   })[value] || 'Pote équilibré : encouragement sincère, humour léger et conseil concret.';
 }
 
 function coachingKnowledge() {
-  return 'UR = écart-type des erreurs de frappe ×10 : il mesure la régularité, pas le centrage ni directement l’accuracy. Le hit error moyen indique early/late. Comparer avec prudence les UR entre DT/HT et NoMod, surtout sur stable. Une OD élevée resserre les hit windows. AR règle le temps de lecture, pas le timing. Ne conseiller l’offset universel que si un biais early/late significatif revient sur plusieurs maps distinctes ; sinon travailler rythme, lecture ou finger control. Distinguer stamina (dégradation avec la durée), speed (BPM limite), finger control (patterns irréguliers) et lecture.';
+  return 'Une bonne partie se juge d’abord par la progression sur la même difficulté, l’accuracy, les misses, le combo, le score, les PP et le ressenti. L’UR est une statistique avancée secondaire : ne jamais le mentionner spontanément ni juger un run dessus. Le hit error moyen sert seulement à repérer un biais early/late répété. Une OD élevée resserre les hit windows. AR règle le temps de lecture, pas le timing. Ne conseiller l’offset universel que si un biais significatif revient sur plusieurs maps distinctes. Distinguer stamina, speed, finger control et lecture.';
 }
 
 function warmupRecommendations(records, profile = playerProfile()) {
@@ -490,7 +507,7 @@ function warmupRecommendations(records, profile = playerProfile()) {
   for (const record of records) {
     if (record.completion !== 'finished' || Number(record.stars) < min || Number(record.stars) > max || !record.beatmapId) continue;
     const current = byMap.get(record.beatmapId);
-    const quality = Number(record.accuracy) - Number(record.misses) * 0.35 - Math.max(0, Number(record.timing?.unstableRate) - 100) * 0.01;
+    const quality = Number(record.accuracy) - Number(record.misses) * 0.35;
     if (!current || quality > current.quality) byMap.set(record.beatmapId, { ...record, quality });
   }
   const candidates = [...byMap.values()];
@@ -513,9 +530,18 @@ function mapStartSummary(record, profile = {}, personality = 'balanced') {
   const level = comfortMin && comfortMax
     ? (Number(record.stars) > comfortMax ? ` Défi à +${(Number(record.stars) - comfortMax).toFixed(2)}★ au-dessus de ta zone confort : priorité à la survie et à l’apprentissage.` : Number(record.stars) < comfortMin ? ' Map sous ta zone confort : vise surtout la propreté.' : ' Map dans ta zone confort : bonne référence pour mesurer ta régularité.')
     : '';
-  const motivation = ({ supportive: 'Respire, installe ton rythme et construis le run.', sarcastic: 'La map croit encore que ton ancien score suffit. C’est mignon.', competitive: 'Cible verrouillée. Va chercher mieux.', analyst: 'Référence chargée : cherche un gain propre, pas un miracle.', balanced: 'La cible est posée : à toi de lui faire prendre sa retraite.' })[personality] || 'La cible est posée : à toi de lui faire prendre sa retraite.';
+  const motivation = ({ supportive: 'Respire, installe ton rythme et construis le run.', sarcastic: 'La map croit encore que ton ancien score suffit. C’est mignon.', competitive: 'Cible verrouillée. Va chercher mieux.', analyst: 'Référence chargée : cherche un gain propre, pas un miracle.', training_companion: 'On joue, on répète, on apprend — et si la map se fait humilier au passage, tant mieux.', balanced: 'La cible est posée : à toi de lui faire prendre sa retraite.' })[personality] || 'La cible est posée : à toi de lui faire prendre sa retraite.';
   if (!previous) return `Première référence sur cette difficulté. Finis proprement pour poser une base à battre. ${motivation}${level}`;
-  return `Meilleur score : ${Number(previous.accuracy).toFixed(2)}% • ${previous.misses} miss • ${previous.combo}/${previous.maxCombo}x${previous.pp ? ` • ${Number(previous.pp).toFixed(1)}pp` : ''}. ${motivation}${level}`;
+  return `Meilleur score : ${Number(previous.accuracy).toFixed(2)}% • ${previous.misses} miss • ${previous.combo}${previous.maxCombo ? `/${previous.maxCombo}` : ''}x${previous.pp ? ` • ${Number(previous.pp).toFixed(1)}pp` : ''}. ${motivation}${level}`;
+}
+
+async function onlineBestForBeatmap(beatmapId) {
+  const cfg = config();
+  if (!osuIntegrationReady(cfg)) return null;
+  const profile = cachedOsuProfile || await osuApi.fetchUser(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), String(cfg.osu_username).trim());
+  cachedOsuProfile = profile;
+  const scores = await osuApi.fetchUserBeatmapScores(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), profile.id, beatmapId);
+  return scores[0] || null;
 }
 
 function showMapStart(data) {
@@ -524,6 +550,16 @@ function showMapStart(data) {
   const previous = bestMapResult(history(), beatmapId);
   const record = makeLiveRecord(data, previous);
   state = { status: 'playing', report: mapStartSummary(record, playerProfile(), config().personality), provider: previous ? 'Meilleur score connu' : 'Nouvelle référence', record, visibleUntil: displayDeadline(), updatedAt: Date.now() };
+  onlineBestForBeatmap(beatmapId).then(onlineBest => {
+    if (!onlineBest || state.status !== 'playing' || Number(state.record?.beatmapId) !== Number(beatmapId)) return;
+    const localBest = state.record.previousScore;
+    const best = !localBest || onlineBest.score > Number(localBest.score || 0) ? onlineBest : localBest;
+    state.record.previousScore = best;
+    state.record.onlineBest = onlineBest;
+    state.report = mapStartSummary(state.record, playerProfile(), config().personality);
+    state.provider = 'Meilleur score osu!';
+    state.updatedAt = Date.now();
+  }).catch(error => log(`Score osu! indisponible pour la beatmap ${beatmapId} : ${error.message}`));
 }
 
 function sessionMemory(records, gapMinutes = 90) {
@@ -633,7 +669,13 @@ function instantSummary(record, previous) {
   }
   if (previous) {
     const delta = record.accuracy - previous.accuracy;
-    if (delta > 0) parts.push(`+${delta.toFixed(2)}% d’acc : petit progrès, mais progrès quand même, on prend !`);
+    const scoreDelta = Number(record.score) - Number(previous.score || 0);
+    const ppDelta = Number(record.pp) - Number(previous.pp || 0);
+    const missDelta = Number(previous.misses || 0) - Number(record.misses || 0);
+    if (ppDelta >= 0.05) parts.push(`+${ppDelta.toFixed(1)}pp sur ta référence : oui, ça se fête !`);
+    else if (scoreDelta > 0) parts.push(`nouveau meilleur score : +${scoreDelta.toLocaleString('fr-FR')} points, la répétition paie !`);
+    else if (delta > 0) parts.push(`+${delta.toFixed(2)}% d’acc : progrès validé, on prend !`);
+    else if (missDelta > 0) parts.push(`${missDelta} miss${missDelta > 1 ? 'es' : ''} de moins : le run devient plus solide.`);
     else {
       const learningLines = ['Cette tentative n’a pas tout donné, mais elle a laissé des indices utiles.', 'On n’encadre pas encore le replay, mais on sait déjà quoi régler ensuite.', 'Le résultat pique un peu ; les données, elles, sont exploitables.', 'Ce run n’entre pas au musée, mais il nous donne une piste claire.', 'Pas besoin de dramatiser : on récupère l’info et on repart plus malin.'];
       parts.push(learningLines[Math.floor(Date.now() / 1000) % learningLines.length]);
@@ -644,9 +686,11 @@ function instantSummary(record, previous) {
 
 function promptFor(record, recent) {
   const language = resolveLanguage();
-  const cleanRecent = recent.slice(-10).map(({ fatigueAdvice, ...item }) => item);
+  const withoutUr = item => ({ ...item, timing: item.timing ? { average: item.timing.average, earlyPercent: item.timing.earlyPercent, latePercent: item.timing.latePercent } : null });
+  const cleanRecent = recent.slice(-10).map(({ fatigueAdvice, ...item }) => withoutUr(item));
+  const coachRecord = withoutUr(record);
   const memory = sessionMemory([...recent, record], config().session_gap_minutes);
-  return `Tu t'appelles ${config().coach_name || 'Coach IA'} et tu coaches osu!. Réponds en ${languageName(language)} (${language}). Personnalité : ${personalityInstruction()}. Base technique vérifiée : ${coachingKnowledge()} Commence par un progrès réel ou un apprentissage utile. Compare surtout avec la même beatmap sans inventer. Utilise la session pour éviter les répétitions. Adapte-toi aux étoiles confortables, objectifs, points faibles et rank cible. Ne promets aucun gain de rank. Après 5 retries, conseille seulement de changer de map. INTERDICTION de suggérer pause, repos, eau ou mouvement si fatigueAdvice est null. Donne 1 ou 2 conseils concrets. Si offsetAdvice.type="check", demande seulement de vérifier l'offset. Si type="universal", cite le changement prudent exact. Sinon, ne parle pas d'offset. Sans markdown, maximum ${Number(config().max_report_chars) || 350} caractères. Profil: ${JSON.stringify(playerProfile())}. Partie: ${JSON.stringify(record)}. Session: ${JSON.stringify(memory)}. Historique: ${JSON.stringify(cleanRecent)}. Fatigue: ${JSON.stringify(record.fatigueAdvice || null)}`;
+  return `Tu t'appelles ${config().coach_name || 'Coach IA'} et tu coaches osu!. Réponds en ${languageName(language)} (${language}). Personnalité : ${personalityInstruction()}. Base technique vérifiée : ${coachingKnowledge()} Commence par ce qui était bon ou en progrès, même si le run n'est pas parfait. Compare surtout avec la meilleure référence de la même beatmap : score, accuracy, misses, combo et PP. Célèbre même un petit gain de PP ou de classement : la répétition est normale et utile. Ne parle jamais d'UR sauf si l'utilisateur le demande explicitement. Utilise la session pour éviter les répétitions. Adapte-toi aux étoiles confortables, objectifs, points faibles et rank cible. Ne promets aucun gain futur de rank. INTERDICTION de suggérer pause, repos, eau ou mouvement si fatigueAdvice est null. Donne 1 ou 2 conseils concrets, avec un ton aussi fun que sérieux. Si offsetAdvice.type="check", demande seulement de vérifier l'offset. Si type="universal", cite le changement prudent exact. Sinon, ne parle pas d'offset. Sans markdown, maximum ${Number(config().max_report_chars) || 1000} caractères. Profil: ${JSON.stringify(playerProfile())}. Partie: ${JSON.stringify(coachRecord)}. Session: ${JSON.stringify(memory)}. Historique: ${JSON.stringify(cleanRecent)}. Fatigue: ${JSON.stringify(record.fatigueAdvice || null)}`;
 }
 
 function removeUnscheduledBreakAdvice(text) {
@@ -670,7 +714,7 @@ function runProcess(executable, args, timeoutMs = 60000, stdinText = '') {
       clearTimeout(timer);
       if (activeAiChild === child) activeAiChild = null;
       if (code !== 0) return reject(new Error(stderr.trim() || `code ${code}`));
-      const maxChars = Number(config().max_report_chars) || 350;
+      const maxChars = Number(config().max_report_chars) || 1000;
       const compact = stdout.trim().replace(/\s+/g, ' ');
       const answer = compact.length <= maxChars ? compact : `${compact.slice(0, Math.max(1, maxChars - 1)).replace(/\s+\S*$/, '')}…`;
       if (!answer) return reject(new Error('réponse vide'));
@@ -713,7 +757,9 @@ async function analyze(data, completion = 'finished') {
   lastFingerprint = fingerprint;
   busy = true;
   const records = history();
-  const previous = previousMapResult(records, record.beatmapId);
+  const localPrevious = previousMapResult(records, record.beatmapId);
+  const liveOnlineBest = Number(state.record?.beatmapId) === Number(record.beatmapId) ? state.record?.onlineBest : null;
+  const previous = liveOnlineBest && (!localPrevious || Number(liveOnlineBest.score) > Number(localPrevious.score)) ? liveOnlineBest : localPrevious;
   record.previousScore = previous ? {
     timestamp: previous.timestamp, score: previous.score, accuracy: previous.accuracy,
     combo: previous.combo, maxCombo: previous.maxCombo, misses: previous.misses, pp: previous.pp,
@@ -731,6 +777,15 @@ async function analyze(data, completion = 'finished') {
     const filtered = record.fatigueAdvice ? result.text : removeUnscheduledBreakAdvice(result.text);
     state = { ...state, status: 'ready', report: filtered || instantSummary(record, previous), provider: result.provider, visibleUntil: displayDeadline(), updatedAt: Date.now() };
     saveState();
+    if (completion === 'finished' && osuIntegrationReady()) {
+      setTimeout(() => syncOsuProfile().then(profile => {
+        if (generation !== analysisGeneration || Number(state.record?.beatmapId) !== Number(record.beatmapId)) return;
+        const celebration = profileProgressSummary(profile.progress);
+        if (!celebration) return;
+        state = { ...state, report: `${state.report}${celebration}`.slice(0, Number(config().max_report_chars) || 1000), visibleUntil: displayDeadline(), updatedAt: Date.now() };
+        saveState();
+      }).catch(error => log(`Sync osu! après partie impossible : ${error.message}`)), 15000);
+    }
   } catch (error) {
     if (generation !== analysisGeneration) return;
     log(`IA indisponible: ${error.message}`);
@@ -745,7 +800,7 @@ function cancelAnalysisForNewMap() {
   if (activeAiChild) activeAiChild.kill();
   activeAiChild = null;
   busy = false;
-  state = { ...state, status: 'ready', provider: 'Coach en pause', report: 'Nouvelle map lancée : analyse précédente annulée. Je garde mon souffle pour le prochain écran de résultats.', updatedAt: Date.now() };
+  state = { status: 'idle', report: '', provider: '', record: null, visibleUntil: 0, updatedAt: Date.now() };
   log('Analyse annulée : une nouvelle map a démarré');
 }
 
@@ -759,6 +814,82 @@ function cancelActiveAnalysis(reason) {
   return true;
 }
 
+function launchDashboard() {
+  const url = `http://127.0.0.1:${Number(config().coach_port) || DEFAULT_CONFIG.coach_port}/dashboard`;
+  const child = spawn(POWERSHELL, ['-NoLogo', '-NoProfile', '-Command', `Start-Process '${url}'`], { windowsHide: true, detached: true, stdio: 'ignore' });
+  child.unref();
+}
+
+function openDashboardIfNeeded() {
+  if (dashboardOpenTimer) clearTimeout(dashboardOpenTimer);
+  dashboardOpenTimer = setTimeout(() => {
+    dashboardOpenTimer = null;
+    if (gameStatus !== 'online') return;
+    if (Date.now() - dashboardLastSeenAt < 12000) {
+      log('Dashboard déjà ouvert : aucun nouvel onglet');
+      return;
+    }
+    launchDashboard();
+    log('Dashboard ouvert automatiquement dans le navigateur');
+  }, 6000);
+}
+
+function sessionWelcome() {
+  const lines = {
+    training_companion: 'Nouvelle session en approche : les doigts se réveillent, les maps commencent déjà à négocier leur survie.',
+    sarcastic: 'osu! redémarre. Les maps avaient pourtant demandé une ordonnance d’éloignement.',
+    competitive: 'Nouvelle session détectée. Échauffement propre, puis on va chercher du progrès.',
+    supportive: 'Nouvelle session : prends une map confortable, retrouve tes sensations et construis tranquillement.',
+    analyst: 'Nouvelle session détectée : commence par une référence confortable avant de monter en difficulté.',
+    balanced: 'Nouvelle session qui se prépare : une map tranquille pour chauffer les doigts, puis on voit qui humilie qui.',
+  };
+  return lines[config().personality] || lines.balanced;
+}
+
+function setGameOnline() {
+  if (gameStatus === 'online') return;
+  gameStatus = 'online';
+  wasPlaying = false;
+  wasResults = false;
+  lastPlayData = null;
+  ignoreResultsUntilPlay = true;
+  state = { status: 'welcome', report: sessionWelcome(), provider: 'Nouvelle session', record: null, visibleUntil: displayDeadline(), updatedAt: Date.now() };
+  log('osu! détecté par processus : nouvelle session');
+  openDashboardIfNeeded();
+}
+
+function setGameOffline(reason = 'osu! fermé') {
+  if (gameStatus === 'offline') return;
+  gameStatus = 'offline';
+  if (dashboardOpenTimer) { clearTimeout(dashboardOpenTimer); dashboardOpenTimer = null; }
+  cancelActiveAnalysis(reason);
+  wasPlaying = false;
+  wasResults = false;
+  lastPlayData = null;
+  ignoreResultsUntilPlay = true;
+  state = { status: 'offline', report: '', provider: '', record: null, visibleUntil: 0, updatedAt: Date.now() };
+  log('osu! fermé : overlay masqué et session arrêtée');
+}
+
+function pollOsuProcess() {
+  if (process.platform !== 'win32') return;
+  const check = () => {
+    if (processCheckRunning) return;
+    processCheckRunning = true;
+    const child = spawn('tasklist.exe', ['/FI', 'IMAGENAME eq osu!.exe', '/FO', 'CSV', '/NH'], { windowsHide: true });
+    let output = '';
+    child.stdout.on('data', chunk => { output += chunk; });
+    child.on('close', () => {
+      processCheckRunning = false;
+      if (/"osu!\.exe"/i.test(output)) setGameOnline();
+      else setGameOffline('processus osu!.exe arrêté');
+    });
+    child.on('error', () => { processCheckRunning = false; });
+  };
+  check();
+  setInterval(check, 2000);
+}
+
 function pollTosu() {
   log('Surveillance TOSU par API locale (500 ms)');
   let polling = false;
@@ -770,48 +901,34 @@ function pollTosu() {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       pollFailures = 0;
-      if (gameStatus !== 'online') {
-        gameStatus = 'online';
-        state = { ...state, status: state.record ? 'ready' : 'idle', updatedAt: Date.now() };
-        log('osu! détecté : surveillance active');
-      }
+      if (process.platform !== 'win32' && gameStatus !== 'online') setGameOnline();
+      if (gameStatus !== 'online') return;
       const result = data.resultsScreen || {};
       const isResults = /result/i.test(data.state?.name || '') || Boolean(result.playerName && (result.score || result.accuracy));
       const isPlaying = /^play$/i.test(data.state?.name || '') && Boolean(data.beatmap?.id);
       if (isPlaying) {
+        ignoreResultsUntilPlay = false;
         if (!wasPlaying) {
           cancelAnalysisForNewMap();
           showSessionRecap();
           showMapStart(data);
         }
         lastPlayData = data;
-        exitCandidate = null;
       }
-      if (isResults && !wasResults) {
-        exitCandidate = null;
+      if (isResults && !wasResults && !ignoreResultsUntilPlay) {
         analyze(data, data.play?.failed ? 'failed' : 'finished');
       } else if (wasPlaying && !isPlaying && !isResults && lastPlayData) {
-        cancelActiveAnalysis('sortie de map avec Échap');
-        exitCandidate = { data: lastPlayData, at: Date.now() };
-      } else if (exitCandidate && !isPlaying && !isResults && Date.now() - exitCandidate.at >= 1500) {
-        const candidate = exitCandidate;
-        exitCandidate = null;
-        analyze(candidate.data, candidate.data.play?.failed ? 'failed' : 'abandoned');
+        cancelActiveAnalysis('sortie volontaire de map');
+        lastPlayData = null;
+        state = { status: 'idle', report: '', provider: '', record: null, visibleUntil: 0, updatedAt: Date.now() };
+        log('Sortie volontaire ignorée : aucun historique et aucune génération IA');
       }
       wasResults = isResults;
       wasPlaying = isPlaying;
     } catch {
       wasResults = false;
       pollFailures++;
-      if (pollFailures >= 6 && gameStatus !== 'offline') {
-        gameStatus = 'offline';
-        cancelActiveAnalysis('osu! a été fermé ou déconnecté de TOSU');
-        wasPlaying = false;
-        lastPlayData = null;
-        exitCandidate = null;
-        state = { ...state, status: 'offline', visibleUntil: 0, updatedAt: Date.now() };
-        log('osu! hors ligne : overlay masqué et session arrêtée');
-      }
+      if (pollFailures >= 6 && process.platform !== 'win32') setGameOffline('osu! déconnecté de TOSU');
     } finally {
       polling = false;
     }
@@ -833,7 +950,7 @@ function readRequestJson(req, maxBytes = 65536) {
 }
 
 function serveDashboard(pathname, res) {
-  const files = { '/': 'index.html', '/dashboard': 'index.html', '/dashboard/': 'index.html', '/dashboard/app.js': 'app.js', '/dashboard/styles.css': 'styles.css' };
+  const files = { '/': 'index.html', '/dashboard': 'index.html', '/dashboard/': 'index.html', '/dashboard/app.js': 'app.js', '/dashboard/personality-options.js': 'personality-options.js', '/dashboard/styles.css': 'styles.css' };
   const name = files[pathname];
   if (!name) return false;
   const file = path.join(DASHBOARD_DIR, name);
@@ -849,6 +966,11 @@ const server = http.createServer(async (req, res) => {
   const requestUrl = new URL(req.url, 'http://127.0.0.1');
   const pathname = requestUrl.pathname;
   if (req.method === 'GET' && serveDashboard(pathname, res)) return;
+  if (pathname === '/api/dashboard/heartbeat' && req.method === 'POST') {
+    if (Date.now() - dashboardLastSeenAt >= 12000) log('Dashboard actif : heartbeat reçu');
+    dashboardLastSeenAt = Date.now();
+    return res.end(JSON.stringify({ ok: true }));
+  }
   if (pathname === '/api/config' && req.method === 'GET') {
     const { osu_client_secret, ...publicConfig } = config();
     return res.end(JSON.stringify({ ...publicConfig, osu_client_secret: '', osu_client_secret_set: Boolean(String(osu_client_secret || '').trim()) }));
@@ -939,9 +1061,9 @@ function main() {
   showSessionRecap();
   if (osuIntegrationReady()) syncOsuProfile().catch(error => log(`Sync osu! au démarrage impossible : ${error.message}`));
   const port = Number(config().coach_port) || DEFAULT_CONFIG.coach_port;
-  server.listen(port, '127.0.0.1', () => { log(`Coach API sur http://127.0.0.1:${port}`); pollTosu(); });
+  server.listen(port, '127.0.0.1', () => { log(`Coach API sur http://127.0.0.1:${port}`); pollOsuProcess(); pollTosu(); });
 }
 
 if (require.main === module) main();
 
-module.exports = { timingStats, recordFingerprint, offsetAdvice, instantSummary, makeRecord, retryStreak, fatigueAdvice, sessionTransition, sessionSummary, previousMapResult, bestMapResult, makeLiveRecord, mapStartSummary, removeUnscheduledBreakAdvice, sessionMemory, splitSessions, summarizeSession, progressByDay, personalityInstruction, warmupRecommendations, displayDeadline, coachingKnowledge, pickRank, osuIntegrationReady };
+module.exports = { timingStats, recordFingerprint, offsetAdvice, instantSummary, makeRecord, retryStreak, fatigueAdvice, sessionTransition, sessionSummary, previousMapResult, bestMapResult, makeLiveRecord, mapStartSummary, removeUnscheduledBreakAdvice, sessionMemory, splitSessions, summarizeSession, progressByDay, personalityInstruction, warmupRecommendations, displayDeadline, coachingKnowledge, pickRank, osuIntegrationReady, promptFor, profileProgressSummary };

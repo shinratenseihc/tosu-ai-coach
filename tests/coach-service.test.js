@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const testDataDir = path.join(os.tmpdir(), `tosu-ai-coach-tests-${process.pid}`);
 process.env.TOSU_COACH_DATA_DIR = testDataDir;
-const { timingStats, recordFingerprint, offsetAdvice, instantSummary, retryStreak, fatigueAdvice, sessionTransition, sessionSummary, previousMapResult, bestMapResult, makeLiveRecord, mapStartSummary, removeUnscheduledBreakAdvice, sessionMemory, splitSessions, summarizeSession, progressByDay, personalityInstruction, warmupRecommendations, displayDeadline, coachingKnowledge, pickRank } = require('../coach-service');
+const { timingStats, recordFingerprint, offsetAdvice, instantSummary, retryStreak, fatigueAdvice, sessionTransition, sessionSummary, previousMapResult, bestMapResult, makeLiveRecord, mapStartSummary, removeUnscheduledBreakAdvice, sessionMemory, splitSessions, summarizeSession, progressByDay, personalityInstruction, warmupRecommendations, displayDeadline, coachingKnowledge, pickRank, promptFor, profileProgressSummary } = require('../coach-service');
 
 test.after(() => {
   if (path.dirname(testDataDir) === os.tmpdir() && path.basename(testDataDir).startsWith('tosu-ai-coach-tests-')) {
@@ -60,6 +60,14 @@ test('fatigueAdvice signale une baisse nette, pas une variation minime', () => {
   const records = [completed({ timestamp: '2026-07-20T10:00:00Z', accuracy: 97, timing: { average: 0, unstableRate: 100 } }), completed({ timestamp: '2026-07-20T10:15:00Z', accuracy: 96, timing: { average: 0, unstableRate: 115 } }), completed({ timestamp: '2026-07-20T10:31:00Z', accuracy: 94, timing: { average: 0, unstableRate: 135 } })];
   assert.ok(fatigueAdvice(records));
   assert.equal(fatigueAdvice([completed(), completed(), completed()]), null);
+});
+
+test('fatigueAdvice ne transforme pas une hausse d’UR seule en alerte', () => {
+  const records = [
+    completed({ timestamp: '2026-07-20T10:00:00Z', accuracy: 97, timing: { average: 0, unstableRate: 80 } }),
+    completed({ timestamp: '2026-07-20T10:31:00Z', accuracy: 97, timing: { average: 0, unstableRate: 180 } }),
+  ];
+  assert.equal(fatigueAdvice(records), null);
 });
 
 test('fatigueAdvice bloque les conseils rapprochés pendant le cooldown', () => {
@@ -165,6 +173,18 @@ test('progressByDay produit les jours vides et les moyennes', () => {
 test('les personnalités produisent des consignes distinctes', () => {
   assert.match(personalityInstruction('analyst'), /factuel|données/);
   assert.notEqual(personalityInstruction('analyst'), personalityInstruction('sarcastic'));
+  assert.match(personalityInstruction('training_companion'), /plaisir|fun|pote/);
+});
+
+test('le prompt de coaching ne transmet pas l’UR au modèle', () => {
+  const prompt = promptFor(completed({ timing: { average: -4, unstableRate: 170 } }), []);
+  assert.doesNotMatch(prompt, /unstableRate|170/);
+  assert.match(prompt, /Ne parle jamais d.UR/);
+});
+
+test('les petits gains de PP et de classement sont célébrés', () => {
+  assert.match(instantSummary(completed({ pp: 101 }), completed({ pp: 100 })), /1\.0pp|fête/);
+  assert.match(profileProgressSummary({ ppGain: 1, globalRankGain: 3, countryRankGain: 0 }), /1\.0pp.*3 places/);
 });
 
 test('warmupRecommendations propose trois maps uniques dans la zone confort', () => {
@@ -180,8 +200,8 @@ test('displayDeadline utilise une durée temporisée', () => {
   assert.ok(deadline >= before && deadline <= Date.now() + 21000);
 });
 
-test('la base de connaissances distingue UR et biais de timing', () => {
-  assert.match(coachingKnowledge(), /UR.*régularité/);
+test('la base de connaissances garde l’UR comme statistique secondaire', () => {
+  assert.match(coachingKnowledge(), /UR.*secondaire/);
   assert.match(coachingKnowledge(), /early\/late/);
 });
 

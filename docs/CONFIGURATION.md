@@ -8,7 +8,7 @@ Le fichier actif est `%LOCALAPPDATA%\TosuAICoach\config.json`, créé depuis `co
 | `claude_first` | `true` | Ordre du fallback en mode `auto` |
 | `language` | `auto` | Langue des réponses : `auto`, `fr`, `en`, `de`, `es`, etc. |
 | `coach_name` | `Coach IA` | Nom affiché dans l’overlay et utilisé par le coach |
-| `personality` | `balanced` | `balanced`, `supportive`, `sarcastic`, `competitive` ou `analyst` |
+| `personality` | `balanced` | `balanced`, `training_companion`, `supportive`, `sarcastic`, `competitive` ou `analyst` |
 | `display_mode` | `timed` | `timed` masque le panneau après le délai ; `always` le garde visible |
 | `display_seconds` | `20` | Durée d’affichage en mode temporisé, de 5 à 120 secondes |
 | `overlay_accent_color` | `#ff66aa` | Couleur d’accent de l’overlay au format hexadécimal `#rrggbb` |
@@ -21,7 +21,7 @@ Le fichier actif est `%LOCALAPPDATA%\TosuAICoach\config.json`, créé depuis `co
 | `failure_pause_minutes` | `15` | Durée minimale d’une série d’échecs avant de proposer une pause |
 | `failure_pause_attempts` | `6` | Nombre minimal d’échecs consécutifs avant une pause |
 | `performance_pause_minutes` | `30` | Durée minimale avant qu’une baisse de performance déclenche une pause |
-| `max_report_chars` | `350` | Longueur maximale du texte affiché |
+| `max_report_chars` | `1000` | Longueur maximale du texte affiché |
 | `comfortable_stars` | `null` | Niveau d’étoiles confortable, par exemple `4.5` |
 | `comfortable_stars_min` | `null` | Bas de la zone confortable, par exemple `4.5` |
 | `comfortable_stars_max` | `null` | Haut de la zone confortable, par exemple `5.2` |
