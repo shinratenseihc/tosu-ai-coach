@@ -14,7 +14,7 @@ osu! → TOSU /json/v2 → coach-service.js → lib/ai-providers.js → Claude C
 
 `lib/storage.js` possède les chemins de données, les migrations depuis les anciens fichiers locaux, le cache de configuration et les écritures persistantes.
 
-`lib/game-monitor.js` observe `osu!.exe` et TOSU, puis émet les transitions nouvelle map, résultat, abandon et déconnexion vers le service.
+`lib/game-monitor.js` observe `osu!.exe` et TOSU, puis émet les transitions sélection, nouvelle map, résultat, sortie volontaire et déconnexion vers le service.
 
 `lib/server.js` expose uniquement sur loopback l’état de l’overlay, la configuration publique, les statistiques et les fichiers du dashboard.
 
@@ -26,14 +26,15 @@ Le service interroge TOSU toutes les 500 ms sur l’interface loopback. Sous Win
 
 ## Cycle d’une partie
 
-1. Le service détecte `play` et conserve le dernier instantané utile.
-2. Un résultat produit `finished` ou `failed`.
-3. Une sortie volontaire avant l’écran de résultats est ignorée : aucun historique et aucun appel IA.
-4. Après un redémarrage du jeu, les anciens résultats encore exposés par TOSU sont ignorés jusqu’au lancement d’une nouvelle map.
-5. La partie est enregistrée avant l’appel IA.
-6. Une synthèse locale apparaît immédiatement.
-7. Claude ou Codex la remplace par un coaching personnalisé.
-7. Une nouvelle map tue le processus IA et invalide sa réponse.
+1. Le service détecte `selectPlay`, affiche le contexte local puis complète le compteur avec l’API osu! si elle est configurée.
+2. Le service détecte `play` et conserve le dernier instantané utile.
+3. Un résultat produit `finished` ou `failed`.
+4. Une sortie volontaire avant l’écran de résultats est ignorée : aucun historique et aucun appel IA.
+5. Après un redémarrage du jeu, les anciens résultats encore exposés par TOSU sont ignorés jusqu’au lancement d’une nouvelle map.
+6. La partie est enregistrée avant l’appel IA.
+7. Une synthèse locale apparaît immédiatement.
+8. Claude ou Codex la remplace par un coaching personnalisé.
+9. Une nouvelle map tue le processus IA et invalide sa réponse.
 
 ## Stockage
 

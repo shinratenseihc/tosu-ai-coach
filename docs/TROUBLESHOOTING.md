@@ -23,7 +23,11 @@ Commence par `scripts\doctor.ps1`.
 
 ## Ancienne partie affichée
 
-Le dernier rapport reste visible jusqu’au suivant. Termine, fail ou abandonne une nouvelle map.
+Le dernier rapport reste visible selon le mode d’affichage choisi. Sélectionne ou lance une nouvelle map pour actualiser le contexte. Une sortie volontaire avec `Échap` est silencieuse.
+
+## Mauvais nombre de parties sur une map
+
+Le compteur officiel nécessite l’intégration osu! et ne couvre que les 100 maps les plus jouées renvoyées par le profil. Hors de cette liste ou si l’API est indisponible, le message précise qu’il utilise seulement l’historique local du coach.
 
 ## Fournisseur indisponible
 
