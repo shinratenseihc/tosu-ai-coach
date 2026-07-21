@@ -6,32 +6,16 @@ const osuApi = require('./osu-api.js');
 const { createAiProviders } = require('./lib/ai-providers.js');
 const { buildPrompt, coachingKnowledge, personalityInstruction, removeUnscheduledBreakAdvice } = require('./lib/coaching.js');
 const stats = require('./lib/stats.js');
+const { createStorage } = require('./lib/storage.js');
 
 const ROOT = __dirname;
-const DATA_DIR = process.env.TOSU_COACH_DATA_DIR || path.join(process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || ROOT, 'AppData', 'Local'), 'TosuAICoach');
-const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
-const HISTORY_PATH = path.join(DATA_DIR, 'history.json');
-const STATE_PATH = path.join(DATA_DIR, 'last-state.json');
-const PROFILE_HISTORY_PATH = path.join(DATA_DIR, 'profile-history.json');
 const DASHBOARD_DIR = path.join(ROOT, 'dashboard');
-const LOG_DIR = path.join(DATA_DIR, 'logs');
-const LOG_PATH = path.join(LOG_DIR, 'coach.log');
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const DEFAULT_CONFIG = { provider: 'auto', claude_first: true, language: 'auto', coach_name: 'Coach IA', personality: 'balanced', display_mode: 'timed', display_seconds: 20, overlay_accent_color: '#ff66aa', overlay_show_background: true, overlay_background_opacity: 100, overlay_show_logo: true, history_limit: 2000, session_gap_minutes: 90, pause_cooldown_minutes: 60, failure_pause_minutes: 15, failure_pause_attempts: 6, performance_pause_minutes: 30, max_report_chars: 1000, comfortable_stars: null, comfortable_stars_min: null, comfortable_stars_max: null, goals: [], weaknesses: [], current_rank: null, rank_goal: null, rank_region: '', osu_integration_enabled: false, osu_username: '', osu_client_id: '', osu_client_secret: '', osu_supporter: false, allow_online_recommendations: false, allow_knowledge_updates: false, tosu_url: 'http://127.0.0.1:24050', coach_port: 24051 };
-
-function initializeStorage() {
-  fs.mkdirSync(LOG_DIR, { recursive: true });
-  const legacy = { 'config.json': CONFIG_PATH, 'history.json': HISTORY_PATH, 'last-state.json': STATE_PATH };
-  for (const [name, destination] of Object.entries(legacy)) {
-    const source = path.join(ROOT, name);
-    if (!fs.existsSync(destination) && fs.existsSync(source)) fs.copyFileSync(source, destination);
-  }
-  if (!fs.existsSync(CONFIG_PATH)) fs.writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2), 'utf8');
-  if (!fs.existsSync(HISTORY_PATH)) fs.writeFileSync(HISTORY_PATH, '[]\n', 'utf8');
-  if (!fs.existsSync(PROFILE_HISTORY_PATH)) fs.writeFileSync(PROFILE_HISTORY_PATH, '[]\n', 'utf8');
-}
-
-initializeStorage();
+const storage = createStorage({ rootDir: ROOT, defaultConfig: DEFAULT_CONFIG });
+storage.initialize();
+const STATE_PATH = storage.paths.state;
+const PROFILE_HISTORY_PATH = storage.paths.profileHistory;
 
 let state = { status: 'idle', report: '', provider: '', record: null, visibleUntil: 0, updatedAt: Date.now() };
 let wasResults = false;
@@ -49,18 +33,8 @@ let dashboardOpenTimer = null;
 let ignoreResultsUntilPlay = true;
 let processCheckRunning = false;
 
-let cachedConfig = null;
-let cachedConfigMtime = 0;
-
 function config() {
-  try {
-    const mtime = fs.statSync(CONFIG_PATH).mtimeMs;
-    if (!cachedConfig || mtime !== cachedConfigMtime) {
-      cachedConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-      cachedConfigMtime = mtime;
-    }
-    return cachedConfig;
-  } catch { return { ...DEFAULT_CONFIG }; }
+  return storage.config();
 }
 
 function tosuApiUrl() {
@@ -81,22 +55,21 @@ function languageName(code) {
 function log(message) {
   const line = `${new Date().toISOString()} ${message}`;
   console.log(line);
-  try { fs.appendFileSync(LOG_PATH, `${line}\n`, 'utf8'); } catch {}
+  storage.appendLog(line);
 }
 
 const aiProviders = createAiProviders({ rootDir: ROOT, getConfig: config, log });
 
 function history() {
-  try { return JSON.parse(fs.readFileSync(HISTORY_PATH, 'utf8')); } catch { return []; }
+  return storage.history();
 }
 
 function saveHistory(records) {
-  const limit = Number(config().history_limit) || 2000;
-  fs.writeFileSync(HISTORY_PATH, JSON.stringify(records.slice(-limit), null, 2), 'utf8');
+  storage.saveHistory(records);
 }
 
 function saveConfig(next) {
-  fs.writeFileSync(CONFIG_PATH, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+  storage.saveConfig(next);
 }
 
 function updatePublicConfig(input) {
@@ -133,16 +106,16 @@ function updatePublicConfig(input) {
   saveConfig(next);
   const snapshots = readJson(PROFILE_HISTORY_PATH, []);
   snapshots.push({ timestamp: new Date().toISOString(), current_rank: next.current_rank, rank_goal: next.rank_goal });
-  fs.writeFileSync(PROFILE_HISTORY_PATH, `${JSON.stringify(snapshots.slice(-500), null, 2)}\n`, 'utf8');
+  storage.saveProfileHistory(snapshots);
   return next;
 }
 
 function readJson(file, fallback) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
+  return storage.readJson(file, fallback);
 }
 
 function saveState() {
-  try { fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2), 'utf8'); } catch {}
+  storage.saveState(state);
 }
 
 function displayDeadline(seconds = config().display_seconds) {
@@ -454,7 +427,7 @@ async function syncOsuProfile() {
     const next = { ...config(), current_rank: rank };
     saveConfig(next);
     snapshots.push({ timestamp: new Date().toISOString(), current_rank: next.current_rank, rank_goal: next.rank_goal, global_rank: profile.globalRank, country_rank: profile.countryRank, pp: profile.pp, source: 'osu-sync' });
-    fs.writeFileSync(PROFILE_HISTORY_PATH, `${JSON.stringify(snapshots.slice(-500), null, 2)}\n`, 'utf8');
+    storage.saveProfileHistory(snapshots);
   }
   const progress = previousOsu ? {
     globalRankGain: Number(previousOsu.global_rank) > Number(profile.globalRank) ? Number(previousOsu.global_rank) - Number(profile.globalRank) : 0,

@@ -12,6 +12,8 @@ osu! → TOSU /json/v2 → coach-service.js → lib/ai-providers.js → Claude C
 
 `lib/stats.js` centralise les calculs purs de timing, d’offset, de fatigue, de tentatives et de meilleures références par beatmap.
 
+`lib/storage.js` possède les chemins de données, les migrations depuis les anciens fichiers locaux, le cache de configuration et les écritures persistantes.
+
 Le service interroge TOSU toutes les 500 ms sur l’interface loopback. Sous Windows, il contrôle aussi toutes les 2 secondes la présence réelle de `osu!.exe` afin de distinguer un jeu fermé d’un état TOSU résiduel. Aucun port n’est exposé au réseau local.
 
 ## Cycle d’une partie
