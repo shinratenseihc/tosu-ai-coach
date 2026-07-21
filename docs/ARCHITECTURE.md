@@ -14,6 +14,8 @@ osu! → TOSU /json/v2 → coach-service.js → lib/ai-providers.js → Claude C
 
 `lib/storage.js` possède les chemins de données, les migrations depuis les anciens fichiers locaux, le cache de configuration et les écritures persistantes.
 
+`lib/game-monitor.js` observe `osu!.exe` et TOSU, puis émet les transitions nouvelle map, résultat, abandon et déconnexion vers le service.
+
 Le service interroge TOSU toutes les 500 ms sur l’interface loopback. Sous Windows, il contrôle aussi toutes les 2 secondes la présence réelle de `osu!.exe` afin de distinguer un jeu fermé d’un état TOSU résiduel. Aucun port n’est exposé au réseau local.
 
 ## Cycle d’une partie

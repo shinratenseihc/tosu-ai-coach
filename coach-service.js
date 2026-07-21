@@ -7,6 +7,7 @@ const { createAiProviders } = require('./lib/ai-providers.js');
 const { buildPrompt, coachingKnowledge, personalityInstruction, removeUnscheduledBreakAdvice } = require('./lib/coaching.js');
 const stats = require('./lib/stats.js');
 const { createStorage } = require('./lib/storage.js');
+const { createGameMonitor } = require('./lib/game-monitor.js');
 
 const ROOT = __dirname;
 const DASHBOARD_DIR = path.join(ROOT, 'dashboard');
@@ -18,20 +19,14 @@ const STATE_PATH = storage.paths.state;
 const PROFILE_HISTORY_PATH = storage.paths.profileHistory;
 
 let state = { status: 'idle', report: '', provider: '', record: null, visibleUntil: 0, updatedAt: Date.now() };
-let wasResults = false;
 let busy = false;
 let lastFingerprint = '';
-let wasPlaying = false;
-let lastPlayData = null;
 let analysisGeneration = 0;
 let lastSessionNotice = '';
 let gameStatus = 'unknown';
-let pollFailures = 0;
 let cachedOsuProfile = null;
 let dashboardLastSeenAt = 0;
 let dashboardOpenTimer = null;
-let ignoreResultsUntilPlay = true;
-let processCheckRunning = false;
 
 function config() {
   return storage.config();
@@ -733,94 +728,40 @@ function sessionWelcome() {
   return lines[config().personality] || lines.balanced;
 }
 
-function setGameOnline() {
+function handleGameOnline() {
   if (gameStatus === 'online') return;
   gameStatus = 'online';
-  wasPlaying = false;
-  wasResults = false;
-  lastPlayData = null;
-  ignoreResultsUntilPlay = true;
   state = { status: 'welcome', report: sessionWelcome(), provider: 'Nouvelle session', record: null, visibleUntil: displayDeadline(), updatedAt: Date.now() };
   log('osu! détecté par processus : nouvelle session');
   openDashboardIfNeeded();
 }
 
-function setGameOffline(reason = 'osu! fermé') {
+function handleGameOffline(reason = 'osu! fermé') {
   if (gameStatus === 'offline') return;
   gameStatus = 'offline';
   if (dashboardOpenTimer) { clearTimeout(dashboardOpenTimer); dashboardOpenTimer = null; }
   cancelActiveAnalysis(reason);
-  wasPlaying = false;
-  wasResults = false;
-  lastPlayData = null;
-  ignoreResultsUntilPlay = true;
   state = { status: 'offline', report: '', provider: '', record: null, visibleUntil: 0, updatedAt: Date.now() };
   log('osu! fermé : overlay masqué et session arrêtée');
 }
 
-function pollOsuProcess() {
-  if (process.platform !== 'win32') return;
-  const check = () => {
-    if (processCheckRunning) return;
-    processCheckRunning = true;
-    const child = spawn('tasklist.exe', ['/FI', 'IMAGENAME eq osu!.exe', '/FO', 'CSV', '/NH'], { windowsHide: true });
-    let output = '';
-    child.stdout.on('data', chunk => { output += chunk; });
-    child.on('close', () => {
-      processCheckRunning = false;
-      if (/"osu!\.exe"/i.test(output)) setGameOnline();
-      else setGameOffline('processus osu!.exe arrêté');
-    });
-    child.on('error', () => { processCheckRunning = false; });
-  };
-  check();
-  setInterval(check, 2000);
-}
-
-function pollTosu() {
-  log('Surveillance TOSU par API locale (500 ms)');
-  let polling = false;
-  setInterval(async () => {
-    if (polling) return;
-    polling = true;
-    try {
-      const response = await fetch(tosuApiUrl());
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      pollFailures = 0;
-      if (process.platform !== 'win32' && gameStatus !== 'online') setGameOnline();
-      if (gameStatus !== 'online') return;
-      const result = data.resultsScreen || {};
-      const isResults = /result/i.test(data.state?.name || '') || Boolean(result.playerName && (result.score || result.accuracy));
-      const isPlaying = /^play$/i.test(data.state?.name || '') && Boolean(data.beatmap?.id);
-      if (isPlaying) {
-        ignoreResultsUntilPlay = false;
-        if (!wasPlaying) {
-          cancelAnalysisForNewMap();
-          showSessionRecap();
-          showMapStart(data);
-        }
-        lastPlayData = data;
-      }
-      if (isResults && !wasResults && !ignoreResultsUntilPlay) {
-        analyze(data, data.play?.failed ? 'failed' : 'finished');
-      } else if (wasPlaying && !isPlaying && !isResults && lastPlayData) {
-        cancelActiveAnalysis('sortie volontaire de map');
-        lastPlayData = null;
-        state = { status: 'idle', report: '', provider: '', record: null, visibleUntil: 0, updatedAt: Date.now() };
-        log('Sortie volontaire ignorée : aucun historique et aucune génération IA');
-      }
-      wasResults = isResults;
-      wasPlaying = isPlaying;
-    } catch {
-      wasResults = false;
-      pollFailures++;
-      if (pollFailures >= 6 && process.platform !== 'win32') setGameOffline('osu! déconnecté de TOSU');
-    } finally {
-      polling = false;
-    }
-  }, 500);
-}
+const gameMonitor = createGameMonitor({
+  getTosuUrl: tosuApiUrl,
+  log,
+  onOnline: handleGameOnline,
+  onOffline: handleGameOffline,
+  onMapStart: data => {
+    cancelAnalysisForNewMap();
+    showSessionRecap();
+    showMapStart(data);
+  },
+  onResult: analyze,
+  onAbandon: () => {
+    cancelActiveAnalysis('sortie volontaire de map');
+    state = { status: 'idle', report: '', provider: '', record: null, visibleUntil: 0, updatedAt: Date.now() };
+    log('Sortie volontaire ignorée : aucun historique et aucune génération IA');
+  },
+});
 
 function readRequestJson(req, maxBytes = 65536) {
   return new Promise((resolve, reject) => {
@@ -948,7 +889,7 @@ function main() {
   showSessionRecap();
   if (osuIntegrationReady()) syncOsuProfile().catch(error => log(`Sync osu! au démarrage impossible : ${error.message}`));
   const port = Number(config().coach_port) || DEFAULT_CONFIG.coach_port;
-  server.listen(port, '127.0.0.1', () => { log(`Coach API sur http://127.0.0.1:${port}`); pollOsuProcess(); pollTosu(); });
+  server.listen(port, '127.0.0.1', () => { log(`Coach API sur http://127.0.0.1:${port}`); gameMonitor.pollOsuProcess(); gameMonitor.pollTosu(); });
 }
 
 if (require.main === module) main();
