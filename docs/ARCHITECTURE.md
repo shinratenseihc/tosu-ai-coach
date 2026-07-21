@@ -1,12 +1,26 @@
 # Architecture
 
 ```text
-osu! → TOSU /json/v2 → coach-service.js → Claude CLI ou Codex CLI
+osu! → TOSU /json/v2 → coach-service.js → lib/ai-providers.js → Claude CLI ou Codex CLI
                               ↓                       ↓
                      historique local          rapport court
                               ↓                       ↓
                     API locale :24051 ← overlay TOSU 9:16
 ```
+
+`lib/coaching.js` construit le contexte envoyé au fournisseur IA, retire l’UR du prompt et filtre les conseils de pause non autorisés.
+
+`lib/stats.js` centralise les calculs purs de timing, d’offset, de fatigue, de tentatives et de meilleures références par beatmap.
+
+`lib/storage.js` possède les chemins de données, les migrations depuis les anciens fichiers locaux, le cache de configuration et les écritures persistantes.
+
+`lib/game-monitor.js` observe `osu!.exe` et TOSU, puis émet les transitions nouvelle map, résultat, abandon et déconnexion vers le service.
+
+`lib/server.js` expose uniquement sur loopback l’état de l’overlay, la configuration publique, les statistiques et les fichiers du dashboard.
+
+`lib/sessions.js` regroupe les calculs purs de reprise, bilan, mémoire de maps et progression par jour.
+
+`lib/records.js` transforme les données TOSU en records stables et produit les messages immédiats de début et de fin de map.
 
 Le service interroge TOSU toutes les 500 ms sur l’interface loopback. Sous Windows, il contrôle aussi toutes les 2 secondes la présence réelle de `osu!.exe` afin de distinguer un jeu fermé d’un état TOSU résiduel. Aucun port n’est exposé au réseau local.
 

@@ -9,6 +9,8 @@ npm run check
 
 Node.js 20+ suffit ; aucune dépendance npm n’est nécessaire.
 
+La CI GitHub Actions exécute automatiquement `npm test` et `npm run check` sous Windows avec Node.js 20 pour chaque pull request et chaque push sur `main`.
+
 Pour isoler les données :
 
 ```powershell
@@ -19,7 +21,15 @@ node coach-service.js
 ## Organisation
 
 ```text
-coach-service.js       Service, détection, historique et IA
+coach-service.js       Service, détection et historique
+lib/ai-providers.js    Exécution, fallback et annulation des fournisseurs IA
+lib/coaching.js        Personnalités, connaissances et construction du prompt
+lib/stats.js           Timing, offset, fatigue et références de score
+lib/storage.js         Configuration cachée, historique, état et migrations
+lib/game-monitor.js    Processus osu!, polling TOSU et transitions de partie
+lib/server.js          Serveur HTTP, routes API et dashboard statique
+lib/sessions.js        Reprises, mémoire de session et progression quotidienne
+lib/records.js         Normalisation TOSU et résumés locaux de map
 counter/               Overlay web TOSU
 scripts/               Installation et diagnostic Windows
 tests/                 Tests Node natifs
@@ -36,7 +46,7 @@ docs/                  Documentation thématique
 
 ## Nouveau fournisseur
 
-Son runner doit retourner une chaîne courte, avoir un timeout et supporter l’annulation. Ne journalise jamais les identifiants. Ajoute-le à `runAi`, avec tests et documentation.
+Son runner doit retourner une chaîne courte, avoir un timeout et supporter l’annulation. Ne journalise jamais les identifiants. Ajoute-le à `lib/ai-providers.js`, avec tests et documentation.
 
 ## Overlay
 
