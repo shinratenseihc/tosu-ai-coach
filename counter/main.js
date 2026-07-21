@@ -46,7 +46,7 @@ async function refresh(){
     provider.textContent=state.status==='analyzing'?'Analyse en cours…':(state.provider||'Analyse locale');
     if(!r){map.textContent='';stats.textContent='';report.textContent=state.report;autoScrollReport();return}
     map.textContent=`${r.artist} — ${r.title} [${r.difficulty}]`;
-    stats.textContent=r.phase==='playing'
+    stats.textContent=r.phase==='playing'||r.phase==='selected'
       ?`${Number(r.stars).toFixed(2)}★  •  ${Number(r.bpm).toFixed(0)} BPM  •  ${r.mods||'NoMod'}  •  max ${r.maxCombo}x`
       :`${Number(r.stars).toFixed(2)}★  •  ${Number(r.accuracy).toFixed(2)}%  •  ${r.misses} miss  •  ${r.combo}/${r.maxCombo}x${r.pp?`  •  ${Number(r.pp).toFixed(1)}pp`:''}`;
     report.textContent=state.report;

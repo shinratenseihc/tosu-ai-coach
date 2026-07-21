@@ -3,8 +3,20 @@ const assert = require('node:assert/strict');
 const { classifyTosuState, createGameMonitor } = require('../lib/game-monitor.js');
 
 test('classifyTosuState distingue jeu et résultats', () => {
-  assert.deepEqual(classifyTosuState({ state: { name: 'play' }, beatmap: { id: 42 } }), { isResults: false, isPlaying: true });
-  assert.deepEqual(classifyTosuState({ state: { name: 'resultScreen' }, resultsScreen: {} }), { isResults: true, isPlaying: false });
+  assert.deepEqual(classifyTosuState({ state: { name: 'play' }, beatmap: { id: 42 } }), { isResults: false, isPlaying: true, isSelected: false });
+  assert.deepEqual(classifyTosuState({ state: { name: 'resultScreen' }, resultsScreen: {} }), { isResults: true, isPlaying: false, isSelected: false });
+  assert.deepEqual(classifyTosuState({ state: { name: 'selectPlay' }, beatmap: { id: 42 } }), { isResults: false, isPlaying: false, isSelected: true });
+});
+
+test('une map sélectionnée est signalée une seule fois jusqu’au lancement', () => {
+  const events = [];
+  const monitor = createGameMonitor({ platform: 'linux', getTosuUrl: () => '', onMapSelected: data => events.push(`selected:${data.beatmap.id}`), onMapStart: () => events.push('start') });
+  monitor.processTosuData({ state: { name: 'selectPlay' }, beatmap: { id: 7 } });
+  monitor.processTosuData({ state: { name: 'selectPlay' }, beatmap: { id: 7 } });
+  monitor.processTosuData({ state: { name: 'selectPlay' }, beatmap: { id: 8 } });
+  monitor.processTosuData({ state: { name: 'play' }, beatmap: { id: 8 } });
+  monitor.processTosuData({ state: { name: 'selectPlay' }, beatmap: { id: 8 } });
+  assert.deepEqual(events, ['selected:7', 'selected:8', 'start', 'selected:8']);
 });
 
 test('un ancien résultat est ignoré jusqu’au lancement d’une map', () => {

@@ -46,6 +46,7 @@ New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $dataDir 'logs') -Force | Out-Null
 
 Copy-Item -LiteralPath (Join-Path $projectRoot 'coach-service.js') -Destination $InstallDir -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'osu-api.js') -Destination $InstallDir -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'start-coach.vbs') -Destination $InstallDir -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'config.example.json') -Destination $InstallDir -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination $InstallDir -Force

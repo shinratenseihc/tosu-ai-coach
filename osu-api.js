@@ -10,6 +10,8 @@ const FETCH_TIMEOUT_MS = 10000;
 let cachedToken = null;
 let cachedTokenExpiry = 0;
 let cachedTokenKey = '';
+const mostPlayedCache = new Map();
+const MOST_PLAYED_CACHE_MS = 5 * 60 * 1000;
 
 function timedFetch(url, options = {}) {
   return fetch(url, { ...options, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
@@ -89,4 +91,23 @@ async function fetchUserBeatmapScores(clientId, clientSecret, userId, beatmapId)
   return (Array.isArray(data) ? data : data.scores || []).map(normalizeScore).sort((a, b) => b.score - a.score);
 }
 
-module.exports = { getToken, fetchUser, fetchUserBeatmapScores, normalizeScore, clearTokenCache };
+function normalizeBeatmapPlaycount(item) {
+  return { beatmapId: Number(item?.beatmap_id || item?.beatmap?.id || 0), count: Number(item?.count || 0) };
+}
+
+async function fetchUserMostPlayed(clientId, clientSecret, userId, limit = 100) {
+  const safeLimit = Math.max(1, Math.min(100, Number(limit) || 100));
+  const cacheKey = `${userId}:${safeLimit}`;
+  const cached = mostPlayedCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < MOST_PLAYED_CACHE_MS) return cached.items;
+  const token = await getToken(clientId, clientSecret);
+  const url = `${API_BASE}/users/${encodeURIComponent(userId)}/beatmapsets/most_played?limit=${safeLimit}&offset=0`;
+  const response = await timedFetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+  if (response.status === 401) { clearTokenCache(); throw new Error('token osu! expiré ou révoqué, réessaie'); }
+  if (!response.ok) throw new Error(`osu! most played HTTP ${response.status}`);
+  const items = (await response.json()).map(normalizeBeatmapPlaycount).filter(item => item.beatmapId);
+  mostPlayedCache.set(cacheKey, { fetchedAt: Date.now(), items });
+  return items;
+}
+
+module.exports = { getToken, fetchUser, fetchUserBeatmapScores, fetchUserMostPlayed, normalizeScore, normalizeBeatmapPlaycount, clearTokenCache };
