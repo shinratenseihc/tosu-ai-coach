@@ -9,6 +9,8 @@ npm run check
 
 Node.js 20+ suffit ; aucune dépendance npm n’est nécessaire.
 
+La CI GitHub Actions exécute automatiquement `npm test` et `npm run check` sous Windows avec Node.js 20 pour chaque pull request et chaque push sur `main`.
+
 Pour isoler les données :
 
 ```powershell
