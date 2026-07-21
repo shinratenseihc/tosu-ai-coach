@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const testDataDir = path.join(os.tmpdir(), `tosu-ai-coach-tests-${process.pid}`);
 process.env.TOSU_COACH_DATA_DIR = testDataDir;
-const { timingStats, recordFingerprint, offsetAdvice, instantSummary, retryStreak, fatigueAdvice, sessionTransition, sessionSummary, previousMapResult, bestMapResult, makeLiveRecord, mapStartSummary, removeUnscheduledBreakAdvice, sessionMemory, splitSessions, summarizeSession, progressByDay, personalityInstruction, warmupRecommendations, displayDeadline, coachingKnowledge, pickRank, promptFor, profileProgressSummary, restoreLastReport } = require('../coach-service');
+const { timingStats, recordFingerprint, offsetAdvice, instantSummary, retryStreak, fatigueAdvice, sessionTransition, sessionSummary, previousMapResult, bestMapResult, makeLiveRecord, mapStartSummary, selectedMapSummary, removeUnscheduledBreakAdvice, sessionMemory, splitSessions, summarizeSession, progressByDay, personalityInstruction, warmupRecommendations, displayDeadline, coachingKnowledge, pickRank, promptFor, profileProgressSummary, restoreLastReport } = require('../coach-service');
 
 test('le service conserve sa routine de restauration au démarrage', () => {
   assert.equal(typeof restoreLastReport, 'function');
@@ -142,6 +142,16 @@ test('mapStartSummary affiche la référence précédente', () => {
   assert.match(mapStartSummary(live), /2 miss/);
   assert.match(mapStartSummary(live, { comfortableStars: 3.5 }), /Défi/);
   assert.match(mapStartSummary(live, { comfortableStarsMin: 4.0, comfortableStarsMax: 4.5 }), /zone confort/);
+});
+
+test('selectedMapSummary annonce les tentatives avant le lancement', () => {
+  const record = { totalAttempts: 6, sessionAttempts: 2, previousScore: { accuracy: 97.25, misses: 1 } };
+  const report = selectedMapSummary(record, 'sarcastic');
+  assert.match(report, /6 parties au total enregistrées par le coach/);
+  assert.match(report, /2 dans cette session/);
+  assert.match(report, /97\.25%/);
+  assert.match(selectedMapSummary({ totalAttempts: 0 }), /Jamais jouée/);
+  assert.match(selectedMapSummary({ totalAttempts: 2, osuPlayCount: 19 }), /19 parties au total selon osu!/);
 });
 
 test('removeUnscheduledBreakAdvice bloque les pauses non déclenchées', () => {

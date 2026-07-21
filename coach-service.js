@@ -11,7 +11,7 @@ const { createCoachServer } = require('./lib/server.js');
 const sessions = require('./lib/sessions.js');
 const { localDateKey, progressByDay, sessionMemory, sessionSummary, sessionTransition, splitSessions, summarizeSession } = sessions;
 const recordFunctions = require('./lib/records.js');
-const { instantSummary, makeLiveRecord, makeRecord, mapStartSummary } = recordFunctions;
+const { instantSummary, makeLiveRecord, makeRecord, mapStartSummary, selectedMapSummary } = recordFunctions;
 
 const ROOT = __dirname;
 const DASHBOARD_DIR = path.join(ROOT, 'dashboard');
@@ -248,6 +248,39 @@ function showMapStart(data) {
   }).catch(error => log(`Score osu! indisponible pour la beatmap ${beatmapId} : ${error.message}`));
 }
 
+async function onlinePlayCountForBeatmap(beatmapId) {
+  const cfg = config();
+  if (!osuIntegrationReady(cfg)) return null;
+  const profile = cachedOsuProfile || await osuApi.fetchUser(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), String(cfg.osu_username).trim());
+  cachedOsuProfile = profile;
+  const maps = await osuApi.fetchUserMostPlayed(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), profile.id, 100);
+  return maps.find(item => Number(item.beatmapId) === Number(beatmapId))?.count ?? null;
+}
+
+function showMapSelection(data) {
+  const beatmapId = Number(data.beatmap?.id || 0);
+  if (!beatmapId) return;
+  const records = history();
+  const attempts = records.filter(record => Number(record.beatmapId) === beatmapId);
+  const previous = stats.bestMapResult(records, beatmapId);
+  const memory = sessionMemory(records, config().session_gap_minutes);
+  const sessionTrack = memory.tracks.find(track => Number(track.beatmapId) === beatmapId);
+  const latestTime = new Date(records.at(-1)?.timestamp || 0).getTime();
+  const sessionIsActive = Number.isFinite(latestTime) && Date.now() - latestTime < Math.max(1, Number(config().session_gap_minutes) || 90) * 60000;
+  const record = makeLiveRecord(data, previous);
+  record.phase = 'selected';
+  record.totalAttempts = attempts.length;
+  record.sessionAttempts = sessionIsActive ? sessionTrack?.attempts || 0 : 0;
+  state = { status: 'selected', report: selectedMapSummary(record, config().personality), provider: 'Map sélectionnée', record, visibleUntil: displayDeadline(), updatedAt: Date.now() };
+  onlinePlayCountForBeatmap(beatmapId).then(playCount => {
+    if (playCount === null || state.status !== 'selected' || Number(state.record?.beatmapId) !== beatmapId) return;
+    state.record.osuPlayCount = playCount;
+    state.report = selectedMapSummary(state.record, config().personality);
+    state.provider = 'Compteur officiel osu!';
+    state.updatedAt = Date.now();
+  }).catch(error => log(`Compteur osu! indisponible pour la beatmap ${beatmapId} : ${error.message}`));
+}
+
 function promptFor(record, recent) {
   const language = resolveLanguage();
   const memory = sessionMemory([...recent, record], config().session_gap_minutes);
@@ -372,6 +405,7 @@ const gameMonitor = createGameMonitor({
   log,
   onOnline: handleGameOnline,
   onOffline: handleGameOffline,
+  onMapSelected: showMapSelection,
   onMapStart: data => {
     cancelAnalysisForNewMap();
     showSessionRecap();
