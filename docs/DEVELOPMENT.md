@@ -22,6 +22,7 @@ node coach-service.js
 coach-service.js       Service, détection et historique
 lib/ai-providers.js    Exécution, fallback et annulation des fournisseurs IA
 lib/coaching.js        Personnalités, connaissances et construction du prompt
+lib/stats.js           Timing, offset, fatigue et références de score
 counter/               Overlay web TOSU
 scripts/               Installation et diagnostic Windows
 tests/                 Tests Node natifs

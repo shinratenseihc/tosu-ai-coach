@@ -5,6 +5,7 @@ const path = require('node:path');
 const osuApi = require('./osu-api.js');
 const { createAiProviders } = require('./lib/ai-providers.js');
 const { buildPrompt, coachingKnowledge, personalityInstruction, removeUnscheduledBreakAdvice } = require('./lib/coaching.js');
+const stats = require('./lib/stats.js');
 
 const ROOT = __dirname;
 const DATA_DIR = process.env.TOSU_COACH_DATA_DIR || path.join(process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || ROOT, 'AppData', 'Local'), 'TosuAICoach');
@@ -229,7 +230,7 @@ function recordFingerprint(record) {
 function restoreLastReport() {
   const records = history();
   const latest = records.at(-1);
-  if (latest) lastFingerprint = recordFingerprint(latest);
+  if (latest) lastFingerprint = stats.recordFingerprint(latest);
   try {
     const saved = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
     if (saved?.record && saved?.report) {
@@ -358,7 +359,7 @@ function makeRecord(data, completion = 'finished') {
   const play = data.play || {};
   const beatmap = data.beatmap || {};
   const hits = Object.keys(result.hits || {}).length && result.accuracy ? result.hits : (play.hits || {});
-  const timing = timingStats(play.hitErrorArray);
+  const timing = stats.timingStats(play.hitErrorArray);
   return {
     timestamp: new Date().toISOString(),
     player: result.playerName || play.playerName || data.profile?.name || '',
@@ -520,7 +521,7 @@ async function onlineBestForBeatmap(beatmapId) {
 function showMapStart(data) {
   const beatmapId = data.beatmap?.id || 0;
   if (!beatmapId) return;
-  const previous = bestMapResult(history(), beatmapId);
+  const previous = stats.bestMapResult(history(), beatmapId);
   const record = makeLiveRecord(data, previous);
   state = { status: 'playing', report: mapStartSummary(record, playerProfile(), config().personality), provider: previous ? 'Meilleur score connu' : 'Nouvelle référence', record, visibleUntil: displayDeadline(), updatedAt: Date.now() };
   onlineBestForBeatmap(beatmapId).then(onlineBest => {
@@ -667,21 +668,21 @@ async function analyze(data, completion = 'finished') {
   if (busy) return;
   const generation = ++analysisGeneration;
   const record = makeRecord(data, completion);
-  const fingerprint = recordFingerprint(record);
+  const fingerprint = stats.recordFingerprint(record);
   if (!record.beatmapId || fingerprint === lastFingerprint) return;
   lastFingerprint = fingerprint;
   busy = true;
   const records = history();
-  const localPrevious = previousMapResult(records, record.beatmapId);
+  const localPrevious = stats.previousMapResult(records, record.beatmapId);
   const liveOnlineBest = Number(state.record?.beatmapId) === Number(record.beatmapId) ? state.record?.onlineBest : null;
   const previous = liveOnlineBest && (!localPrevious || Number(liveOnlineBest.score) > Number(localPrevious.score)) ? liveOnlineBest : localPrevious;
   record.previousScore = previous ? {
     timestamp: previous.timestamp, score: previous.score, accuracy: previous.accuracy,
     combo: previous.combo, maxCombo: previous.maxCombo, misses: previous.misses, pp: previous.pp,
   } : null;
-  record.offsetAdvice = offsetAdvice([...records, record]);
-  record.retryStreak = completion === 'finished' ? 0 : retryStreak(records, record.beatmapId) + 1;
-  record.fatigueAdvice = fatigueAdvice([...records, record], config());
+  record.offsetAdvice = stats.offsetAdvice([...records, record]);
+  record.retryStreak = completion === 'finished' ? 0 : stats.retryStreak(records, record.beatmapId) + 1;
+  record.fatigueAdvice = stats.fatigueAdvice([...records, record], config());
   records.push(record);
   saveHistory(records);
   state = { status: 'analyzing', report: instantSummary(record, previous), provider: '', record, visibleUntil: displayDeadline(), updatedAt: Date.now() };
@@ -979,4 +980,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { timingStats, recordFingerprint, offsetAdvice, instantSummary, makeRecord, retryStreak, fatigueAdvice, sessionTransition, sessionSummary, previousMapResult, bestMapResult, makeLiveRecord, mapStartSummary, removeUnscheduledBreakAdvice, sessionMemory, splitSessions, summarizeSession, progressByDay, personalityInstruction, warmupRecommendations, displayDeadline, coachingKnowledge, pickRank, osuIntegrationReady, promptFor, profileProgressSummary };
+module.exports = { ...stats, instantSummary, makeRecord, sessionTransition, sessionSummary, makeLiveRecord, mapStartSummary, removeUnscheduledBreakAdvice, sessionMemory, splitSessions, summarizeSession, progressByDay, personalityInstruction, warmupRecommendations, displayDeadline, coachingKnowledge, pickRank, osuIntegrationReady, promptFor, profileProgressSummary };
