@@ -18,6 +18,8 @@ osu! → TOSU /json/v2 → coach-service.js → lib/ai-providers.js → Claude C
 
 `lib/server.js` expose uniquement sur loopback l’état de l’overlay, la configuration publique, les statistiques et les fichiers du dashboard.
 
+`lib/sessions.js` regroupe les calculs purs de reprise, bilan, mémoire de maps et progression par jour.
+
 Le service interroge TOSU toutes les 500 ms sur l’interface loopback. Sous Windows, il contrôle aussi toutes les 2 secondes la présence réelle de `osu!.exe` afin de distinguer un jeu fermé d’un état TOSU résiduel. Aucun port n’est exposé au réseau local.
 
 ## Cycle d’une partie
