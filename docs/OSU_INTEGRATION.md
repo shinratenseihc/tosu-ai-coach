@@ -1,6 +1,6 @@
 # Connexion osu! (optionnelle)
 
-Cette intégration permet au coach de récupérer ton profil public osu! (rank global, rank pays, pp) et de mettre à jour automatiquement ton « rank actuel » dans le profil joueur.
+Cette intégration permet au coach de récupérer ton profil public osu! (rank global, rank pays, pp), tes meilleurs scores publics sur la difficulté jouée et de mettre à jour automatiquement ton « rank actuel » dans le profil joueur.
 
 Elle est entièrement optionnelle. Sans elle, tout le reste du coach fonctionne normalement.
 

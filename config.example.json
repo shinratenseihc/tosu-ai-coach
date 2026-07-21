@@ -16,7 +16,7 @@
   "failure_pause_minutes": 15,
   "failure_pause_attempts": 6,
   "performance_pause_minutes": 30,
-  "max_report_chars": 350,
+  "max_report_chars": 1000,
   "comfortable_stars": null,
   "comfortable_stars_min": null,
   "comfortable_stars_max": null,

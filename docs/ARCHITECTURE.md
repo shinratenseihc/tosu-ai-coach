@@ -8,16 +8,17 @@ osu! → TOSU /json/v2 → coach-service.js → Claude CLI ou Codex CLI
                     API locale :24051 ← overlay TOSU 9:16
 ```
 
-Le service interroge TOSU toutes les 500 ms sur l’interface loopback. Aucun port n’est exposé au réseau local.
+Le service interroge TOSU toutes les 500 ms sur l’interface loopback. Sous Windows, il contrôle aussi toutes les 2 secondes la présence réelle de `osu!.exe` afin de distinguer un jeu fermé d’un état TOSU résiduel. Aucun port n’est exposé au réseau local.
 
 ## Cycle d’une partie
 
 1. Le service détecte `play` et conserve le dernier instantané utile.
 2. Un résultat produit `finished` ou `failed`.
-3. Un retour au menu sans résultat pendant 1,5 seconde produit `abandoned`.
-4. La partie est enregistrée avant l’appel IA.
-5. Une synthèse locale apparaît immédiatement.
-6. Claude ou Codex la remplace par un coaching personnalisé.
+3. Une sortie volontaire avant l’écran de résultats est ignorée : aucun historique et aucun appel IA.
+4. Après un redémarrage du jeu, les anciens résultats encore exposés par TOSU sont ignorés jusqu’au lancement d’une nouvelle map.
+5. La partie est enregistrée avant l’appel IA.
+6. Une synthèse locale apparaît immédiatement.
+7. Claude ou Codex la remplace par un coaching personnalisé.
 7. Une nouvelle map tue le processus IA et invalide sa réponse.
 
 ## Stockage

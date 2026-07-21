@@ -1,7 +1,7 @@
 // Client osu! API v2 en mode "client credentials".
 // Aucun callback, aucune autorisation navigateur : l'utilisateur fournit
 // l'identifiant et le secret de sa propre application OAuth osu!.
-// Lecture de données publiques uniquement (profil, rank, pp).
+// Lecture de données publiques uniquement (profil, rank, pp, scores personnels).
 
 const TOKEN_URL = 'https://osu.ppy.sh/oauth/token';
 const API_BASE = 'https://osu.ppy.sh/api/v2';
@@ -61,4 +61,32 @@ async function fetchUser(clientId, clientSecret, username) {
   };
 }
 
-module.exports = { getToken, fetchUser, clearTokenCache };
+function normalizeScore(score) {
+  const statistics = score.statistics || {};
+  const mods = Array.isArray(score.mods)
+    ? score.mods.map(mod => typeof mod === 'string' ? mod : mod.acronym).filter(Boolean).join('')
+    : '';
+  return {
+    score: Number(score.total_score ?? score.legacy_total_score ?? score.score ?? 0),
+    accuracy: Number(score.accuracy || 0) * (Number(score.accuracy || 0) <= 1 ? 100 : 1),
+    combo: Number(score.max_combo || 0),
+    misses: Number(statistics.miss ?? statistics.count_miss ?? 0),
+    pp: Number(score.pp || 0),
+    rank: score.rank || '',
+    mods,
+    endedAt: score.ended_at || score.created_at || null,
+  };
+}
+
+async function fetchUserBeatmapScores(clientId, clientSecret, userId, beatmapId) {
+  const token = await getToken(clientId, clientSecret);
+  const url = `${API_BASE}/beatmaps/${encodeURIComponent(beatmapId)}/scores/users/${encodeURIComponent(userId)}/all?ruleset=osu`;
+  const response = await timedFetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+  if (response.status === 401) { clearTokenCache(); throw new Error('token osu! expiré ou révoqué, réessaie'); }
+  if (response.status === 404) return [];
+  if (!response.ok) throw new Error(`osu! scores HTTP ${response.status}`);
+  const data = await response.json();
+  return (Array.isArray(data) ? data : data.scores || []).map(normalizeScore).sort((a, b) => b.score - a.score);
+}
+
+module.exports = { getToken, fetchUser, fetchUserBeatmapScores, normalizeScore, clearTokenCache };

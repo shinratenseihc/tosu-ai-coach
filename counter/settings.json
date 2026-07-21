@@ -1,0 +1,9 @@
+[
+  {
+    "uniqueID": "coachDashboard",
+    "type": "button",
+    "title": "Dashboard du Coach",
+    "description": "Ouvre le tableau de bord local pour consulter la progression et configurer le coach.",
+    "value": "http://127.0.0.1:24051/dashboard"
+  }
+]
