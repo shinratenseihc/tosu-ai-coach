@@ -5,7 +5,11 @@ const os = require('node:os');
 const path = require('node:path');
 const testDataDir = path.join(os.tmpdir(), `tosu-ai-coach-tests-${process.pid}`);
 process.env.TOSU_COACH_DATA_DIR = testDataDir;
-const { timingStats, recordFingerprint, offsetAdvice, instantSummary, retryStreak, fatigueAdvice, sessionTransition, sessionSummary, previousMapResult, bestMapResult, makeLiveRecord, mapStartSummary, removeUnscheduledBreakAdvice, sessionMemory, splitSessions, summarizeSession, progressByDay, personalityInstruction, warmupRecommendations, displayDeadline, coachingKnowledge, pickRank, promptFor, profileProgressSummary } = require('../coach-service');
+const { timingStats, recordFingerprint, offsetAdvice, instantSummary, retryStreak, fatigueAdvice, sessionTransition, sessionSummary, previousMapResult, bestMapResult, makeLiveRecord, mapStartSummary, removeUnscheduledBreakAdvice, sessionMemory, splitSessions, summarizeSession, progressByDay, personalityInstruction, warmupRecommendations, displayDeadline, coachingKnowledge, pickRank, promptFor, profileProgressSummary, restoreLastReport } = require('../coach-service');
+
+test('le service conserve sa routine de restauration au démarrage', () => {
+  assert.equal(typeof restoreLastReport, 'function');
+});
 
 test.after(() => {
   if (path.dirname(testDataDir) === os.tmpdir() && path.basename(testDataDir).startsWith('tosu-ai-coach-tests-')) {

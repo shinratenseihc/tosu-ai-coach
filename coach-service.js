@@ -10,6 +10,8 @@ const { createGameMonitor } = require('./lib/game-monitor.js');
 const { createCoachServer } = require('./lib/server.js');
 const sessions = require('./lib/sessions.js');
 const { localDateKey, progressByDay, sessionMemory, sessionSummary, sessionTransition, splitSessions, summarizeSession } = sessions;
+const recordFunctions = require('./lib/records.js');
+const { instantSummary, makeLiveRecord, makeRecord, mapStartSummary } = recordFunctions;
 
 const ROOT = __dirname;
 const DASHBOARD_DIR = path.join(ROOT, 'dashboard');
@@ -142,10 +144,6 @@ function showSessionRecap(now = new Date()) {
   return true;
 }
 
-function recordFingerprint(record) {
-  return `${record.beatmapId}|${record.score}|${record.accuracy}|${record.combo}|${record.misses}|${record.completion || 'finished'}`;
-}
-
 function restoreLastReport() {
   const records = history();
   const latest = records.at(-1);
@@ -159,180 +157,7 @@ function restoreLastReport() {
   } catch {}
   const record = records.at(-1);
   if (!record) return;
-  state = {
-    status: 'ready',
-    report: instantSummary(record, records.at(-2)),
-    provider: 'Dernière analyse',
-    record,
-    visibleUntil: config().display_mode === 'always' ? Number.MAX_SAFE_INTEGER : 0,
-    updatedAt: Date.now(),
-  };
-}
-
-function timingStats(values) {
-  const clean = (values || []).filter(value => Number.isFinite(value) && Math.abs(value) < 250);
-  if (!clean.length) return { average: 0, unstableRate: 0, earlyPercent: 0, latePercent: 0 };
-  const average = clean.reduce((sum, value) => sum + value, 0) / clean.length;
-  const variance = clean.reduce((sum, value) => sum + Math.pow(value - average, 2), 0) / clean.length;
-  return {
-    average: Math.round(average * 10) / 10,
-    unstableRate: Math.round(Math.sqrt(variance) * 10 * 10) / 10,
-    earlyPercent: Math.round(clean.filter(value => value < 0).length / clean.length * 100),
-    latePercent: Math.round(clean.filter(value => value > 0).length / clean.length * 100),
-  };
-}
-
-function offsetAdvice(records) {
-  const unique = [];
-  const seen = new Set();
-  for (const record of records) {
-    const key = recordFingerprint(record);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(record);
-  }
-  const eligible = unique.filter(record =>
-    record.completion === 'finished' &&
-    Number.isFinite(record.timing?.average) &&
-    (Number(record.hit50) + Number(record.hit100) + Number(record.hit300)) >= 100
-  ).slice(-12);
-  const maps = new Set(eligible.map(record => record.beatmapId));
-  if (eligible.length < 3 || maps.size < 3) return null;
-  const early = eligible.filter(record => record.timing.average < 0).length;
-  const late = eligible.filter(record => record.timing.average > 0).length;
-  const consistency = Math.max(early, late) / eligible.length;
-  const sorted = eligible.map(record => record.timing.average).sort((a, b) => a - b);
-  const median = sorted[Math.floor(sorted.length / 2)];
-  if (eligible.length >= 5 && consistency >= 0.8 && Math.abs(median) >= 8) {
-    const changeMs = Math.max(-20, Math.min(20, Math.round(-median)));
-    return {
-      type: 'universal',
-      changeMs,
-      sampleSize: eligible.length,
-      mapCount: maps.size,
-      medianHitError: Math.round(median * 10) / 10,
-      instruction: `${changeMs > 0 ? 'augmente' : 'diminue'} ton offset universel de ${Math.abs(changeMs)} ms`,
-    };
-  }
-  const consecutive = eligible.slice(-3);
-  const consecutiveMaps = new Set(consecutive.map(record => record.beatmapId));
-  const allEarly = consecutive.every(record => record.timing.average <= -8);
-  const allLate = consecutive.every(record => record.timing.average >= 8);
-  if (consecutive.length === 3 && consecutiveMaps.size === 3 && (allEarly || allLate)) {
-    const recentSorted = consecutive.map(record => record.timing.average).sort((a, b) => a - b);
-    const recentMedian = recentSorted[1];
-    return {
-      type: 'check',
-      direction: allEarly ? 'early' : 'late',
-      sampleSize: 3,
-      mapCount: 3,
-      medianHitError: Math.round(recentMedian * 10) / 10,
-      instruction: `vérifie ton offset universel : tes 3 dernières maps montrent un biais ${allEarly ? 'early' : 'late'}, sans le modifier automatiquement pour l’instant`,
-    };
-  }
-  return null;
-}
-
-function retryStreak(records, beatmapId) {
-  let streak = 0;
-  for (const record of [...records].reverse()) {
-    if (record.beatmapId !== beatmapId || record.completion === 'finished') break;
-    streak++;
-  }
-  return streak;
-}
-
-function fatigueAdvice(records, options = {}) {
-  const cooldownMs = (Number(options.pause_cooldown_minutes) || 60) * 60000;
-  const failureWindowMs = (Number(options.failure_pause_minutes) || 15) * 60000;
-  const failureAttempts = Number(options.failure_pause_attempts) || 6;
-  const performanceWindowMs = (Number(options.performance_pause_minutes) || 30) * 60000;
-  const recordTimes = records.map(record => new Date(record.timestamp).getTime()).filter(Number.isFinite);
-  const latestTime = recordTimes.length ? Math.max(...recordTimes) : Date.now();
-  const recentlyAdvised = records.some(record => record.fatigueAdvice && Number.isFinite(new Date(record.timestamp).getTime()) && latestTime - new Date(record.timestamp).getTime() < cooldownMs);
-  if (recentlyAdvised) return null;
-
-  const failures = [];
-  for (const record of [...records].reverse()) {
-    if (record.completion === 'finished') break;
-    if (record.completion === 'failed' || record.completion === 'abandoned') failures.unshift(record);
-  }
-  const failureTimes = failures.map(record => new Date(record.timestamp).getTime()).filter(Number.isFinite);
-  if (failures.length >= failureAttempts && failureTimes.length >= 2 && failureTimes.at(-1) - failureTimes[0] >= failureWindowMs) {
-    return { reason: 'failure_streak', attempts: failures.length, minutes: Math.round((failureTimes.at(-1) - failureTimes[0]) / 60000) };
-  }
-
-  const recent = records.filter(record => record.completion === 'finished').slice(-3);
-  if (recent.length < 3) return null;
-  const times = recent.map(record => new Date(record.timestamp).getTime()).filter(Number.isFinite);
-  if (times.length < 2 || times.at(-1) - times[0] < performanceWindowMs) return null;
-  const first = recent[0];
-  const last = recent[recent.length - 1];
-  const accuracyDrop = Number(first.accuracy) - Number(last.accuracy);
-  if (accuracyDrop < 2) return null;
-  return { reason: 'performance_drop', accuracyDrop: Math.round(accuracyDrop * 100) / 100 };
-}
-
-function makeRecord(data, completion = 'finished') {
-  const result = data.resultsScreen || {};
-  const play = data.play || {};
-  const beatmap = data.beatmap || {};
-  const hits = Object.keys(result.hits || {}).length && result.accuracy ? result.hits : (play.hits || {});
-  const timing = stats.timingStats(play.hitErrorArray);
-  return {
-    timestamp: new Date().toISOString(),
-    player: result.playerName || play.playerName || data.profile?.name || '',
-    beatmapId: beatmap.id || 0,
-    setId: beatmap.set || 0,
-    artist: beatmap.artist || '',
-    title: beatmap.title || '',
-    difficulty: beatmap.version || '',
-    stars: beatmap.stats?.stars?.total || beatmap.stats?.stars?.live || 0,
-    aim: beatmap.stats?.stars?.aim || 0,
-    speed: beatmap.stats?.stars?.speed || 0,
-    reading: beatmap.stats?.stars?.reading || 0,
-    bpm: beatmap.stats?.bpm?.common || 0,
-    score: result.score || play.score || 0,
-    accuracy: result.accuracy || play.accuracy || 0,
-    combo: result.maxCombo || play.combo?.current || 0,
-    maxCombo: beatmap.stats?.maxCombo || 0,
-    misses: Number(hits['0'] || 0),
-    hit50: Number(hits['50'] || 0),
-    hit100: Number(hits['100'] || 0),
-    hit300: Number(hits['300'] || 0),
-    sliderBreaks: Number(hits.sliderBreaks || play.hits?.sliderBreaks || 0),
-    mods: result.mods?.name || play.mods?.name || '',
-    pp: result.pp?.current || play.pp?.current || 0,
-    ppFc: result.pp?.fc || play.pp?.fc || 0,
-    failed: completion === 'failed',
-    completion,
-    progressPercent: Math.max(0, Math.min(100, Math.round(
-      Number(beatmap.time?.live || 0) / Math.max(1, Number(beatmap.time?.lastObject || beatmap.time?.mp3Length || 1)) * 100
-    ))),
-    timing,
-  };
-}
-
-function previousMapResult(records, beatmapId) {
-  return [...records].reverse().find(record => record.beatmapId === beatmapId && record.completion === 'finished') || null;
-}
-
-function bestMapResult(records, beatmapId) {
-  return records.filter(record => record.beatmapId === beatmapId && record.completion === 'finished').reduce((best, record) => {
-    if (!best || Number(record.score) > Number(best.score)) return record;
-    if (Number(record.score) === Number(best.score) && Number(record.accuracy) > Number(best.accuracy)) return record;
-    return best;
-  }, null);
-}
-
-function makeLiveRecord(data, previous = null) {
-  const record = makeRecord(data, 'playing');
-  record.phase = 'playing';
-  record.previousScore = previous ? {
-    timestamp: previous.timestamp, score: previous.score, accuracy: previous.accuracy,
-    combo: previous.combo, maxCombo: previous.maxCombo, misses: previous.misses, pp: previous.pp,
-  } : null;
-  return record;
+  state = { status: 'ready', report: instantSummary(record, records.at(-2)), provider: 'Dernière analyse', record, visibleUntil: config().display_mode === 'always' ? Number.MAX_SAFE_INTEGER : 0, updatedAt: Date.now() };
 }
 
 function playerProfile() {
@@ -392,40 +217,8 @@ function profileProgressSummary(progress) {
   return parts.length ? ` Progression osu! confirmée : ${parts.join(' et ')}. Ça se fête.` : '';
 }
 
-function warmupRecommendations(records, profile = playerProfile()) {
-  const min = Number(profile.comfortableStarsMin || profile.comfortableStars || 0);
-  const max = Number(profile.comfortableStarsMax || profile.comfortableStars || 0);
-  if (!min || !max) return [];
-  const byMap = new Map();
-  for (const record of records) {
-    if (record.completion !== 'finished' || Number(record.stars) < min || Number(record.stars) > max || !record.beatmapId) continue;
-    const current = byMap.get(record.beatmapId);
-    const quality = Number(record.accuracy) - Number(record.misses) * 0.35;
-    if (!current || quality > current.quality) byMap.set(record.beatmapId, { ...record, quality });
-  }
-  const candidates = [...byMap.values()];
-  const targets = [min + (max - min) * 0.15, min + (max - min) * 0.5, min + (max - min) * 0.85];
-  const labels = ['Mise en route', 'Contrôle', 'Activation'];
-  const selected = [];
-  for (let index = 0; index < targets.length; index++) {
-    const available = candidates.filter(record => !selected.some(item => item.beatmapId === record.beatmapId));
-    const best = available.sort((a, b) => (Math.abs(Number(a.stars) - targets[index]) - Math.abs(Number(b.stars) - targets[index])) || (b.quality - a.quality))[0];
-    if (!best) continue;
-    selected.push({ label: labels[index], beatmapId: best.beatmapId, setId: best.setId, artist: best.artist, title: best.title, difficulty: best.difficulty, stars: best.stars, bpm: best.bpm, accuracy: best.accuracy, misses: best.misses, url: best.setId ? `https://osu.ppy.sh/beatmapsets/${best.setId}#osu/${best.beatmapId}` : `https://osu.ppy.sh/beatmaps/${best.beatmapId}` });
-  }
-  return selected;
-}
-
-function mapStartSummary(record, profile = {}, personality = 'balanced') {
-  const previous = record.previousScore;
-  const comfortMin = Number(profile.comfortableStarsMin || profile.comfortableStars);
-  const comfortMax = Number(profile.comfortableStarsMax || profile.comfortableStars);
-  const level = comfortMin && comfortMax
-    ? (Number(record.stars) > comfortMax ? ` Défi à +${(Number(record.stars) - comfortMax).toFixed(2)}★ au-dessus de ta zone confort : priorité à la survie et à l’apprentissage.` : Number(record.stars) < comfortMin ? ' Map sous ta zone confort : vise surtout la propreté.' : ' Map dans ta zone confort : bonne référence pour mesurer ta régularité.')
-    : '';
-  const motivation = ({ supportive: 'Respire, installe ton rythme et construis le run.', sarcastic: 'La map croit encore que ton ancien score suffit. C’est mignon.', competitive: 'Cible verrouillée. Va chercher mieux.', analyst: 'Référence chargée : cherche un gain propre, pas un miracle.', training_companion: 'On joue, on répète, on apprend — et si la map se fait humilier au passage, tant mieux.', balanced: 'La cible est posée : à toi de lui faire prendre sa retraite.' })[personality] || 'La cible est posée : à toi de lui faire prendre sa retraite.';
-  if (!previous) return `Première référence sur cette difficulté. Finis proprement pour poser une base à battre. ${motivation}${level}`;
-  return `Meilleur score : ${Number(previous.accuracy).toFixed(2)}% • ${previous.misses} miss • ${previous.combo}${previous.maxCombo ? `/${previous.maxCombo}` : ''}x${previous.pp ? ` • ${Number(previous.pp).toFixed(1)}pp` : ''}. ${motivation}${level}`;
+function warmupRecommendations(items, profile = playerProfile()) {
+  return recordFunctions.warmupRecommendations(items, profile);
 }
 
 async function onlineBestForBeatmap(beatmapId) {
@@ -453,40 +246,6 @@ function showMapStart(data) {
     state.provider = 'Meilleur score osu!';
     state.updatedAt = Date.now();
   }).catch(error => log(`Score osu! indisponible pour la beatmap ${beatmapId} : ${error.message}`));
-}
-
-function instantSummary(record, previous) {
-  if (record.completion !== 'finished') {
-    if (record.progressPercent >= 90) return `À ${record.progressPercent}%, quitter c’est presque une performance artistique : je comprends, ce score aurait fait trop peur au classement. On garde la leçon et on revient le chercher.`;
-    if (record.retryStreak >= 5) return `${record.retryStreak}e tentative sur cette map : à ce stade ce n’est plus de l’entêtement, c’est une relation toxique. Change de map quelques runs pour casser la boucle.`;
-    const jokes = record.completion === 'failed'
-      ? ['La barre de vie a posé sa démission sans préavis.', 'Le retry vient officiellement de devenir ton meilleur ami.', 'La map t’a rendu à l’accueil avec accusé de réception.', 'On avait demandé un FC, pas une démonstration de gravité.', 'Ton curseur était présent, son avocat beaucoup moins.', 'Le rythme t’a vu arriver et a changé les serrures.']
-      : ['Retraite stratégique validée, personne ne dira ragequit devant les témoins.', 'Tu as quitté la map avant qu’elle puisse déposer plainte.', 'Cette tentative rejoint discrètement le programme de protection des runs.', 'Le bouton Échap vient de gagner un point de performance.', 'On appellera ça une reconnaissance du terrain très, très prudente.', 'La map continue sans toi, elle devrait s’en remettre.'];
-    return `${jokes[Math.floor(Date.now() / 1000) % jokes.length]} Tu as atteint ${record.progressPercent}% : on garde les données utiles et on prépare la revanche.`;
-  }
-  const parts = [];
-  parts.push(`${record.accuracy.toFixed(2)}% • ${record.misses} miss${record.misses === 1 ? '' : 'es'} • ${record.combo}/${record.maxCombo}x`);
-  if (record.timing.average < -8) parts.push(`timing plutôt early (${record.timing.average} ms)`);
-  else if (record.timing.average > 8) parts.push(`timing plutôt late (+${record.timing.average} ms)`);
-  else {
-    const timingLines = ['tes frappes sont plutôt bien calées', 'le timing tient la route sur cette partie', 'pas de gros décalage de timing à signaler', 'tes clics restent dans une zone assez propre', 'le métronome intérieur fait son boulot'];
-    parts.push(timingLines[Math.floor(Date.now() / 1000) % timingLines.length]);
-  }
-  if (previous) {
-    const delta = record.accuracy - previous.accuracy;
-    const scoreDelta = Number(record.score) - Number(previous.score || 0);
-    const ppDelta = Number(record.pp) - Number(previous.pp || 0);
-    const missDelta = Number(previous.misses || 0) - Number(record.misses || 0);
-    if (ppDelta >= 0.05) parts.push(`+${ppDelta.toFixed(1)}pp sur ta référence : oui, ça se fête !`);
-    else if (scoreDelta > 0) parts.push(`nouveau meilleur score : +${scoreDelta.toLocaleString('fr-FR')} points, la répétition paie !`);
-    else if (delta > 0) parts.push(`+${delta.toFixed(2)}% d’acc : progrès validé, on prend !`);
-    else if (missDelta > 0) parts.push(`${missDelta} miss${missDelta > 1 ? 'es' : ''} de moins : le run devient plus solide.`);
-    else {
-      const learningLines = ['Cette tentative n’a pas tout donné, mais elle a laissé des indices utiles.', 'On n’encadre pas encore le replay, mais on sait déjà quoi régler ensuite.', 'Le résultat pique un peu ; les données, elles, sont exploitables.', 'Ce run n’entre pas au musée, mais il nous donne une piste claire.', 'Pas besoin de dramatiser : on récupère l’info et on repart plus malin.'];
-      parts.push(learningLines[Math.floor(Date.now() / 1000) % learningLines.length]);
-    }
-  }
-  return parts.join(' — ');
 }
 
 function promptFor(record, recent) {
@@ -679,4 +438,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { ...stats, ...sessions, instantSummary, makeRecord, makeLiveRecord, mapStartSummary, removeUnscheduledBreakAdvice, personalityInstruction, warmupRecommendations, displayDeadline, coachingKnowledge, pickRank, osuIntegrationReady, promptFor, profileProgressSummary };
+module.exports = { ...stats, ...sessions, ...recordFunctions, removeUnscheduledBreakAdvice, personalityInstruction, warmupRecommendations, displayDeadline, coachingKnowledge, pickRank, osuIntegrationReady, promptFor, profileProgressSummary, restoreLastReport };

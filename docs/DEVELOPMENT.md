@@ -27,6 +27,7 @@ lib/storage.js         Configuration cachée, historique, état et migrations
 lib/game-monitor.js    Processus osu!, polling TOSU et transitions de partie
 lib/server.js          Serveur HTTP, routes API et dashboard statique
 lib/sessions.js        Reprises, mémoire de session et progression quotidienne
+lib/records.js         Normalisation TOSU et résumés locaux de map
 counter/               Overlay web TOSU
 scripts/               Installation et diagnostic Windows
 tests/                 Tests Node natifs

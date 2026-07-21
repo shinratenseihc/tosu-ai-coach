@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node coach-service.js",
-    "check": "node --check coach-service.js && node --check lib/ai-providers.js && node --check lib/coaching.js && node --check lib/stats.js && node --check lib/storage.js && node --check lib/game-monitor.js && node --check lib/server.js && node --check lib/sessions.js && node --check osu-api.js && node --check counter/main.js && node --check dashboard/app.js && node --check dashboard/personality-options.js",
+    "check": "node --check coach-service.js && node --check lib/ai-providers.js && node --check lib/coaching.js && node --check lib/stats.js && node --check lib/storage.js && node --check lib/game-monitor.js && node --check lib/server.js && node --check lib/sessions.js && node --check lib/records.js && node --check osu-api.js && node --check counter/main.js && node --check dashboard/app.js && node --check dashboard/personality-options.js",
     "test": "node --test --test-isolation=none"
   },
   "keywords": ["osu", "tosu", "overlay", "coach", "claude", "codex"]
