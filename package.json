@@ -1,6 +1,6 @@
 {
   "name": "tosu-ai-coach",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Coach IA local et overlay portrait pour osu! via TOSU, compatible Claude CLI et Codex CLI.",
   "license": "MIT",

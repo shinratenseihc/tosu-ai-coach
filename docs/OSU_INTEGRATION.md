@@ -1,8 +1,10 @@
 # Connexion osu! (optionnelle)
 
-Cette intégration permet au coach de récupérer ton profil public osu! (rank global, rank pays, pp), tes meilleurs scores publics sur la difficulté jouée et de mettre à jour automatiquement ton « rank actuel » dans le profil joueur.
+Cette intégration permet au coach de récupérer ton profil public osu! (rank global, rank pays, pp), tes meilleurs scores publics sur la difficulté jouée, le compteur officiel de tes maps les plus jouées et de mettre à jour automatiquement ton « rank actuel » dans le profil joueur.
 
 Elle est entièrement optionnelle. Sans elle, tout le reste du coach fonctionne normalement.
+
+Elle est gratuite et ne nécessite pas d’abonnement osu!supporter. Un compte osu! capable de créer une application OAuth suffit.
 
 ## Comment ça marche
 
@@ -32,6 +34,16 @@ Aucune donnée n'est envoyée ailleurs que vers `osu.ppy.sh`. Le secret n'est ja
 
 Le rank est ensuite resynchronisé à chaque démarrage du service.
 
+## Compteur de parties avant lancement
+
+Quand une map est sélectionnée, le coach interroge la liste publique des 100 beatmaps les plus jouées du profil :
+
+- si la difficulté est présente, son compteur officiel osu! est affiché ;
+- la réponse est gardée en cache pendant 5 minutes pour rester rapide ;
+- si la map n’est pas dans ce top 100 ou si l’API est indisponible, le coach indique explicitement le nombre enregistré dans son historique local.
+
+Ce compteur osu! et les tentatives de la session sont deux informations différentes. Une simple sélection de map n’ajoute aucune tentative.
+
 ## Quel rank est utilisé ?
 
 - Si le champ **Classement / région** de ton profil est renseigné (par exemple `Suisse`), c'est ton **rank pays** qui met à jour le « rank actuel ».
@@ -42,6 +54,7 @@ Le rank est ensuite resynchronisé à chaque démarrage du service.
 - Le secret n'apparaît jamais dans les réponses de l'API locale du coach : il rentre, il ne ressort pas.
 - Ne partage jamais ton Client Secret et ne le colle jamais dans un fichier versionné.
 - Tu peux révoquer l'application à tout moment depuis la même page OAuth de ton compte osu! : le coach perdra simplement l'accès et affichera une erreur claire à la prochaine synchronisation.
+- L’application utilise le flux OAuth `client_credentials` et le scope public. L’URL de redirection demandée par osu! n’est pas utilisée par le coach.
 
 ## Dépannage
 
