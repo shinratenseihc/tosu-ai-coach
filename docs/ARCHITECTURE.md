@@ -1,7 +1,7 @@
 # Architecture
 
 ```text
-osu! → TOSU /json/v2 → coach-service.js → Claude CLI ou Codex CLI
+osu! → TOSU /json/v2 → coach-service.js → lib/ai-providers.js → Claude CLI ou Codex CLI
                               ↓                       ↓
                      historique local          rapport court
                               ↓                       ↓

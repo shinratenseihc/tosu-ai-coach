@@ -50,6 +50,9 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'start-coach.vbs') -Destination $
 Copy-Item -LiteralPath (Join-Path $projectRoot 'config.example.json') -Destination $InstallDir -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination $InstallDir -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination $InstallDir -Force
+$installedLib = Join-Path $InstallDir 'lib'
+New-Item -ItemType Directory -Path $installedLib -Force | Out-Null
+Copy-Item -Path (Join-Path $projectRoot 'lib\*') -Destination $installedLib -Recurse -Force
 $installedDocs = Join-Path $InstallDir 'docs'
 New-Item -ItemType Directory -Path $installedDocs -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\COACHING_KNOWLEDGE.md') -Destination $installedDocs -Force

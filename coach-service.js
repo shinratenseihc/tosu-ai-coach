@@ -1,8 +1,9 @@
-const { spawn, spawnSync } = require('node:child_process');
+const { spawn } = require('node:child_process');
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const osuApi = require('./osu-api.js');
+const { createAiProviders } = require('./lib/ai-providers.js');
 
 const ROOT = __dirname;
 const DATA_DIR = process.env.TOSU_COACH_DATA_DIR || path.join(process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || ROOT, 'AppData', 'Local'), 'TosuAICoach');
@@ -15,12 +16,6 @@ const LOG_DIR = path.join(DATA_DIR, 'logs');
 const LOG_PATH = path.join(LOG_DIR, 'coach.log');
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const DEFAULT_CONFIG = { provider: 'auto', claude_first: true, language: 'auto', coach_name: 'Coach IA', personality: 'balanced', display_mode: 'timed', display_seconds: 20, overlay_accent_color: '#ff66aa', overlay_show_background: true, overlay_background_opacity: 100, overlay_show_logo: true, history_limit: 2000, session_gap_minutes: 90, pause_cooldown_minutes: 60, failure_pause_minutes: 15, failure_pause_attempts: 6, performance_pause_minutes: 30, max_report_chars: 1000, comfortable_stars: null, comfortable_stars_min: null, comfortable_stars_max: null, goals: [], weaknesses: [], current_rank: null, rank_goal: null, rank_region: '', osu_integration_enabled: false, osu_username: '', osu_client_id: '', osu_client_secret: '', osu_supporter: false, allow_online_recommendations: false, allow_knowledge_updates: false, tosu_url: 'http://127.0.0.1:24050', coach_port: 24051 };
-
-function findExecutable(command, candidates = []) {
-  for (const candidate of candidates) if (candidate && fs.existsSync(candidate)) return candidate;
-  const found = spawnSync('where.exe', [command], { encoding: 'utf8', windowsHide: true });
-  return found.status === 0 ? found.stdout.split(/\r?\n/).find(Boolean) || '' : '';
-}
 
 function initializeStorage() {
   fs.mkdirSync(LOG_DIR, { recursive: true });
@@ -36,22 +31,12 @@ function initializeStorage() {
 
 initializeStorage();
 
-const CLAUDE = findExecutable('claude', [
-  process.env.CLAUDE_PATH,
-  path.join(process.env.USERPROFILE || '', '.local', 'bin', 'claude.exe'),
-]);
-const CODEX = findExecutable('codex', [
-  process.env.CODEX_PATH,
-  path.join(process.env.APPDATA || '', 'npm', 'codex.ps1'),
-]);
-
 let state = { status: 'idle', report: '', provider: '', record: null, visibleUntil: 0, updatedAt: Date.now() };
 let wasResults = false;
 let busy = false;
 let lastFingerprint = '';
 let wasPlaying = false;
 let lastPlayData = null;
-let activeAiChild = null;
 let analysisGeneration = 0;
 let lastSessionNotice = '';
 let gameStatus = 'unknown';
@@ -96,6 +81,8 @@ function log(message) {
   console.log(line);
   try { fs.appendFileSync(LOG_PATH, `${line}\n`, 'utf8'); } catch {}
 }
+
+const aiProviders = createAiProviders({ rootDir: ROOT, getConfig: config, log });
 
 function history() {
   try { return JSON.parse(fs.readFileSync(HISTORY_PATH, 'utf8')); } catch { return []; }
@@ -699,55 +686,6 @@ function removeUnscheduledBreakAdvice(text) {
   return kept.join(' ').trim();
 }
 
-function runProcess(executable, args, timeoutMs = 60000, stdinText = '') {
-  return new Promise((resolve, reject) => {
-    const child = spawn(executable, args, { cwd: ROOT, windowsHide: true });
-    activeAiChild = child;
-    child.stdin.end(stdinText);
-    let stdout = '';
-    let stderr = '';
-    const timer = setTimeout(() => child.kill(), timeoutMs);
-    child.stdout.on('data', chunk => { stdout += chunk.toString(); });
-    child.stderr.on('data', chunk => { stderr += chunk.toString(); });
-    child.on('error', reject);
-    child.on('close', code => {
-      clearTimeout(timer);
-      if (activeAiChild === child) activeAiChild = null;
-      if (code !== 0) return reject(new Error(stderr.trim() || `code ${code}`));
-      const maxChars = Number(config().max_report_chars) || 1000;
-      const compact = stdout.trim().replace(/\s+/g, ' ');
-      const answer = compact.length <= maxChars ? compact : `${compact.slice(0, Math.max(1, maxChars - 1)).replace(/\s+\S*$/, '')}…`;
-      if (!answer) return reject(new Error('réponse vide'));
-      resolve(answer);
-    });
-  });
-}
-
-function runClaude(prompt) {
-  if (!CLAUDE) return Promise.reject(new Error('Claude CLI introuvable'));
-  return runProcess(CLAUDE, ['-p', '--no-session-persistence', '--permission-mode', 'dontAsk', '--effort', 'low', prompt]);
-}
-
-function runCodex(prompt) {
-  if (!CODEX) return Promise.reject(new Error('Codex CLI introuvable'));
-  const args = ['exec', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only', '-C', ROOT];
-  if (/\.ps1$/i.test(CODEX)) return runProcess(POWERSHELL, ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', CODEX, ...args], 60000, prompt);
-  return runProcess(CODEX, args, 60000, prompt);
-}
-
-async function runAi(prompt) {
-  const cfg = config();
-  if (cfg.provider === 'claude') return { provider: 'Claude', text: await runClaude(prompt) };
-  if (cfg.provider === 'codex') return { provider: 'Codex', text: await runCodex(prompt) };
-  const order = cfg.claude_first === false ? [['Codex', runCodex], ['Claude', runClaude]] : [['Claude', runClaude], ['Codex', runCodex]];
-  let lastError;
-  for (const [name, runner] of order) {
-    try { return { provider: name, text: await runner(prompt) }; }
-    catch (error) { lastError = error; log(`${name} indisponible: ${error.message}`); }
-  }
-  throw lastError;
-}
-
 async function analyze(data, completion = 'finished') {
   if (busy) return;
   const generation = ++analysisGeneration;
@@ -772,7 +710,7 @@ async function analyze(data, completion = 'finished') {
   state = { status: 'analyzing', report: instantSummary(record, previous), provider: '', record, visibleUntil: displayDeadline(), updatedAt: Date.now() };
   log(`Analyse: ${record.artist} - ${record.title}`);
   try {
-    const result = await runAi(promptFor(record, records.slice(0, -1)));
+    const result = await aiProviders.runAi(promptFor(record, records.slice(0, -1)));
     if (generation !== analysisGeneration) return;
     const filtered = record.fatigueAdvice ? result.text : removeUnscheduledBreakAdvice(result.text);
     state = { ...state, status: 'ready', report: filtered || instantSummary(record, previous), provider: result.provider, visibleUntil: displayDeadline(), updatedAt: Date.now() };
@@ -797,8 +735,7 @@ async function analyze(data, completion = 'finished') {
 function cancelAnalysisForNewMap() {
   if (!busy) return;
   analysisGeneration++;
-  if (activeAiChild) activeAiChild.kill();
-  activeAiChild = null;
+  aiProviders.cancel();
   busy = false;
   state = { status: 'idle', report: '', provider: '', record: null, visibleUntil: 0, updatedAt: Date.now() };
   log('Analyse annulée : une nouvelle map a démarré');
@@ -807,8 +744,7 @@ function cancelAnalysisForNewMap() {
 function cancelActiveAnalysis(reason) {
   if (!busy) return false;
   analysisGeneration++;
-  if (activeAiChild) activeAiChild.kill();
-  activeAiChild = null;
+  aiProviders.cancel();
   busy = false;
   log(`Analyse annulée : ${reason}`);
   return true;
@@ -1046,7 +982,7 @@ server.on('error', error => { log(`Serveur: ${error.message}`); process.exitCode
 
 function main() {
   if (process.argv.includes('--test-providers')) {
-    Promise.allSettled([runClaude('Réponds uniquement OK.'), runCodex('Réponds uniquement OK, sans outil.')])
+    Promise.allSettled([aiProviders.runClaude('Réponds uniquement OK.'), aiProviders.runCodex('Réponds uniquement OK, sans outil.')])
       .then(results => {
         console.log(JSON.stringify({
           claude: results[0].status === 'fulfilled' && results[0].value.trim() === 'OK',
