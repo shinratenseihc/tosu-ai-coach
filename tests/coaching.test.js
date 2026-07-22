@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildPrompt, buildSelectionPrompt, coachingKnowledge, personalityInstruction, removeUnscheduledBreakAdvice } = require('../lib/coaching.js');
+const { buildPrompt, buildSelectionPrompt, clampReport, coachingKnowledge, personalityInstruction, removeUnscheduledBreakAdvice } = require('../lib/coaching.js');
 
 test('les personnalités restent distinctes et le compagnon privilégie le fun', () => {
   assert.match(personalityInstruction('analyst'), /factuel|données/);
@@ -44,4 +44,9 @@ test('le prompt de sélection privilégie le pote commentateur sans commentaire 
   assert.match(prompt, /pote commentateur|humour/i);
   assert.match(prompt, /maximum 280 caractères/);
   assert.doesNotMatch(prompt, /texte local à ne pas transmettre/);
+});
+
+test('clampReport conserve la limite et le défaut existants', () => {
+  assert.equal(clampReport('abcdef', 4), 'abcd');
+  assert.equal(clampReport('abc', 0), 'abc');
 });

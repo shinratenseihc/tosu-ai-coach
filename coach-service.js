@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const osuApi = require('./osu-api.js');
 const { createAiProviders } = require('./lib/ai-providers.js');
-const { buildPrompt, buildSelectionPrompt, coachingKnowledge, personalityInstruction, removeUnscheduledBreakAdvice } = require('./lib/coaching.js');
+const { buildPrompt, buildSelectionPrompt, clampReport, coachingKnowledge, personalityInstruction, removeUnscheduledBreakAdvice } = require('./lib/coaching.js');
 const stats = require('./lib/stats.js');
 const { createStorage } = require('./lib/storage.js');
 const { createGameMonitor } = require('./lib/game-monitor.js');
@@ -14,6 +14,8 @@ const recordFunctions = require('./lib/records.js');
 const { instantSummary, makeLiveRecord, makeRecord, mapStartSummary, selectedMapSummary } = recordFunctions;
 const { createRunTracker, summarizeRunIncidents } = require('./lib/run-analysis.js');
 const { communityMood } = require('./lib/community-mood.js');
+const { validateConfig } = require('./lib/config-schema.js');
+const { createCoachState } = require('./lib/coach-state.js');
 
 const ROOT = __dirname;
 const DASHBOARD_DIR = path.join(ROOT, 'dashboard');
@@ -24,13 +26,18 @@ storage.initialize();
 const STATE_PATH = storage.paths.state;
 const PROFILE_HISTORY_PATH = storage.paths.profileHistory;
 
-let state = { status: 'idle', report: '', provider: '', record: null, visibleUntil: 0, updatedAt: Date.now() };
+const coachState = createCoachState({
+  initial: { status: 'idle', report: '', provider: '', record: null, visibleUntil: 0, updatedAt: Date.now() },
+  onChange: next => storage.saveState(next),
+});
 let busy = false;
 let lastFingerprint = '';
 let analysisGeneration = 0;
 let lastSessionNotice = '';
 let gameStatus = 'unknown';
 let cachedOsuProfile = null;
+let cachedOsuClient = null;
+let cachedOsuClientKey = '';
 let dashboardLastSeenAt = 0;
 let dashboardOpenTimer = null;
 const runTracker = createRunTracker();
@@ -79,13 +86,13 @@ function cancelSelectionCommentary() {
 }
 
 function applySelectionCommentary(beatmapId, commentary) {
-  if (state.status !== 'selected' || Number(state.record?.beatmapId) !== Number(beatmapId)) return false;
-  state.record.selectionCommentary = commentary.text;
-  state.report = commentary.text;
-  state.provider = `${commentary.provider} • pote commentateur`;
-  state.visibleUntil = displayDeadline();
-  state.updatedAt = Date.now();
-  return true;
+  const current = coachState.get();
+  return coachState.applyIfCurrent({ status: 'selected', beatmapId }, {
+    record: { ...current.record, selectionCommentary: commentary.text },
+    report: commentary.text,
+    provider: `${commentary.provider} • pote commentateur`,
+    visibleUntil: displayDeadline(),
+  });
 }
 
 function scheduleSelectionCommentary(beatmapId) {
@@ -96,8 +103,9 @@ function scheduleSelectionCommentary(beatmapId) {
   const generation = selectionGeneration;
   selectionTimer = setTimeout(async () => {
     selectionTimer = null;
-    if (generation !== selectionGeneration || state.status !== 'selected' || Number(state.record?.beatmapId) !== Number(beatmapId)) return;
-    const record = { ...state.record };
+    const current = coachState.get();
+    if (generation !== selectionGeneration || current.status !== 'selected' || Number(current.record?.beatmapId) !== Number(beatmapId)) return;
+    const record = { ...current.record };
     try {
       const result = await selectionAiProviders.runAi(buildSelectionPrompt({ record, config: config(), languageLabel: languageName(resolveLanguage()) }));
       if (generation !== selectionGeneration) return;
@@ -124,36 +132,7 @@ function saveConfig(next) {
 }
 
 function updatePublicConfig(input) {
-  const current = config();
-  const next = { ...current };
-  const numeric = ['comfortable_stars_min', 'comfortable_stars_max', 'current_rank', 'rank_goal'];
-  const lists = ['goals', 'weaknesses'];
-  for (const key of numeric) {
-    const value = input[key];
-    next[key] = value === null || value === '' ? null : Math.max(0, Number(value) || 0);
-  }
-  for (const key of lists) next[key] = Array.isArray(input[key]) ? input[key].map(value => String(value).trim()).filter(Boolean).slice(0, 12) : [];
-  if (['auto', 'claude', 'codex'].includes(input.provider)) next.provider = input.provider;
-  if (['balanced', 'supportive', 'sarcastic', 'competitive', 'analyst', 'training_companion'].includes(input.personality)) next.personality = input.personality;
-  if (['always', 'timed'].includes(input.display_mode)) next.display_mode = input.display_mode;
-  if (input.display_seconds !== undefined) next.display_seconds = Math.max(5, Math.min(120, Number(input.display_seconds) || 20));
-  if (typeof input.claude_first === 'boolean') next.claude_first = input.claude_first;
-  if (typeof input.language === 'string' && /^[a-z]{2,8}([-_][a-z]{2,8})?$/i.test(input.language)) next.language = input.language;
-  if (typeof input.rank_region === 'string') next.rank_region = input.rank_region.trim().slice(0, 40);
-  if (typeof input.coach_name === 'string') next.coach_name = input.coach_name.trim().slice(0, 32) || 'Coach IA';
-  if (typeof input.overlay_accent_color === 'string' && /^#[0-9a-f]{6}$/i.test(input.overlay_accent_color.trim())) next.overlay_accent_color = input.overlay_accent_color.trim().toLowerCase();
-  if (input.overlay_background_opacity !== undefined) {
-    next.overlay_background_opacity = Math.max(0, Math.min(100, Math.round(Number(input.overlay_background_opacity) || 0)));
-    next.overlay_show_background = next.overlay_background_opacity > 0;
-  }
-  if (typeof input.osu_username === 'string') next.osu_username = input.osu_username.trim().slice(0, 40);
-  if (typeof input.osu_client_id === 'string' && /^\d{0,20}$/.test(input.osu_client_id.trim())) next.osu_client_id = input.osu_client_id.trim();
-  if (typeof input.osu_client_secret === 'string' && input.osu_client_secret.trim()) next.osu_client_secret = input.osu_client_secret.trim().slice(0, 120);
-  if (input.osu_client_secret === null) next.osu_client_secret = '';
-  for (const key of ['overlay_show_background', 'overlay_show_logo', 'osu_integration_enabled', 'osu_supporter', 'allow_online_recommendations', 'allow_knowledge_updates']) if (typeof input[key] === 'boolean') next[key] = input[key];
-  if (next.comfortable_stars_min && next.comfortable_stars_max && next.comfortable_stars_min > next.comfortable_stars_max) {
-    [next.comfortable_stars_min, next.comfortable_stars_max] = [next.comfortable_stars_max, next.comfortable_stars_min];
-  }
+  const next = validateConfig(input, config());
   saveConfig(next);
   const snapshots = readJson(PROFILE_HISTORY_PATH, []);
   snapshots.push({ timestamp: new Date().toISOString(), current_rank: next.current_rank, rank_goal: next.rank_goal });
@@ -163,10 +142,6 @@ function updatePublicConfig(input) {
 
 function readJson(file, fallback) {
   return storage.readJson(file, fallback);
-}
-
-function saveState() {
-  storage.saveState(state);
 }
 
 function displayDeadline(seconds = config().display_seconds) {
@@ -182,16 +157,15 @@ function showSessionRecap(now = new Date()) {
   lastSessionNotice = noticeKey;
   const warmup = warmupRecommendations(records);
   const warmupText = warmup.length ? ` Échauffement : ${warmup.map(item => `${item.title} (${Number(item.stars).toFixed(2)}★)`).join(' → ')}.` : '';
-  state = {
+  coachState.set({
     status: 'ready',
-    report: `${recap.report}${warmupText}`.slice(0, Number(config().max_report_chars) || 1000),
+    report: clampReport(`${recap.report}${warmupText}`, config().max_report_chars),
     provider: recap.newDay ? 'Objectif du jour' : 'Reprise de session',
     record: recap.latest,
     visibleUntil: displayDeadline(),
     updatedAt: Date.now(),
     sessionRecap: { newDay: recap.newDay, runs: recap.session.length, focus: recap.focus, warmup },
-  };
-  saveState();
+  });
   log(`${recap.newDay ? 'Nouvelle journée' : 'Nouvelle session'} détectée : ${recap.report}`);
   return true;
 }
@@ -203,13 +177,13 @@ function restoreLastReport() {
   try {
     const saved = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
     if (saved?.record && saved?.report) {
-      state = { ...saved, visibleUntil: config().display_mode === 'always' ? Number.MAX_SAFE_INTEGER : 0, updatedAt: Date.now() };
+      coachState.set({ ...saved, visibleUntil: config().display_mode === 'always' ? Number.MAX_SAFE_INTEGER : 0 });
       return;
     }
   } catch {}
   const record = records.at(-1);
   if (!record) return;
-  state = { status: 'ready', report: instantSummary(record, records.at(-2)), provider: 'Dernière analyse', record, visibleUntil: config().display_mode === 'always' ? Number.MAX_SAFE_INTEGER : 0, updatedAt: Date.now() };
+  coachState.set({ status: 'ready', report: instantSummary(record, records.at(-2)), provider: 'Dernière analyse', record, visibleUntil: config().display_mode === 'always' ? Number.MAX_SAFE_INTEGER : 0 });
 }
 
 function playerProfile() {
@@ -238,12 +212,23 @@ function osuIntegrationReady(cfg = config()) {
   return Boolean(cfg.osu_integration_enabled && String(cfg.osu_username || '').trim() && String(cfg.osu_client_id || '').trim() && String(cfg.osu_client_secret || '').trim());
 }
 
+function osuClient(cfg = config()) {
+  const clientId = String(cfg.osu_client_id || '').trim();
+  const clientSecret = String(cfg.osu_client_secret || '').trim();
+  const key = `${clientId}\0${clientSecret}`;
+  if (!cachedOsuClient || cachedOsuClientKey !== key) {
+    cachedOsuClient = osuApi.createClient({ clientId, clientSecret });
+    cachedOsuClientKey = key;
+  }
+  return cachedOsuClient;
+}
+
 async function syncOsuProfile() {
   const cfg = config();
   if (!osuIntegrationReady(cfg)) throw new Error('intégration osu! non configurée : active-la et renseigne pseudo, client ID et secret');
   const snapshots = readJson(PROFILE_HISTORY_PATH, []);
   const previousOsu = [...snapshots].reverse().find(item => item.source === 'osu-sync') || null;
-  const profile = await osuApi.fetchUser(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), String(cfg.osu_username).trim());
+  const profile = await osuClient(cfg).fetchUser(String(cfg.osu_username).trim());
   cachedOsuProfile = profile;
   const rank = pickRank(profile, cfg.rank_region);
   if (rank) {
@@ -276,9 +261,9 @@ function warmupRecommendations(items, profile = playerProfile()) {
 async function onlineBestForBeatmap(beatmapId) {
   const cfg = config();
   if (!osuIntegrationReady(cfg)) return null;
-  const profile = cachedOsuProfile || await osuApi.fetchUser(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), String(cfg.osu_username).trim());
+  const profile = cachedOsuProfile || await osuClient(cfg).fetchUser(String(cfg.osu_username).trim());
   cachedOsuProfile = profile;
-  const scores = await osuApi.fetchUserBeatmapScores(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), profile.id, beatmapId);
+  const scores = await osuClient(cfg).fetchUserBeatmapScores(profile.id, beatmapId);
   return scores[0] || null;
 }
 
@@ -295,31 +280,34 @@ function showMapStart(data) {
   activeDifficultyBeatmapId = Number(beatmapId);
   if (osuIntegrationReady()) {
     const cfg = config();
-    osuApi.fetchBeatmapFailProfile(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), beatmapId)
-      .then(profile => { if (activeDifficultyBeatmapId === Number(beatmapId)) activeDifficultyProfile = profile; })
+    osuClient(cfg).fetchBeatmapFailProfile(beatmapId)
+      .then(profile => {
+        if (activeDifficultyBeatmapId === Number(beatmapId) && coachState.applyIfCurrent({ status: 'playing', beatmapId }, {})) activeDifficultyProfile = profile;
+      })
       .catch(error => log(`Profil temporel osu! indisponible pour la beatmap ${beatmapId} : ${error.message}`));
   }
-  state = { status: 'playing', report: cachedSelectionCommentary?.text || mapStartSummary(record, playerProfile(), config().personality), provider: cachedSelectionCommentary ? `${cachedSelectionCommentary.provider} • pote commentateur` : previous ? 'Meilleur score connu' : 'Nouvelle référence', record, visibleUntil: displayDeadline(), updatedAt: Date.now() };
+  coachState.set({ status: 'playing', report: cachedSelectionCommentary?.text || mapStartSummary(record, playerProfile(), config().personality), provider: cachedSelectionCommentary ? `${cachedSelectionCommentary.provider} • pote commentateur` : previous ? 'Meilleur score connu' : 'Nouvelle référence', record, visibleUntil: displayDeadline() });
   onlineBestForBeatmap(beatmapId).then(onlineBest => {
-    if (!onlineBest || state.status !== 'playing' || Number(state.record?.beatmapId) !== Number(beatmapId)) return;
-    const localBest = state.record.previousScore;
+    if (!onlineBest) return;
+    const current = coachState.get();
+    const localBest = current.record?.previousScore;
     const best = !localBest || onlineBest.score > Number(localBest.score || 0) ? onlineBest : localBest;
-    state.record.previousScore = best;
-    state.record.onlineBest = onlineBest;
-    if (!state.record.selectionCommentary) {
-      state.report = mapStartSummary(state.record, playerProfile(), config().personality);
-      state.provider = 'Meilleur score osu!';
+    const nextRecord = { ...current.record, previousScore: best, onlineBest };
+    const patch = { record: nextRecord };
+    if (!nextRecord.selectionCommentary) {
+      patch.report = mapStartSummary(nextRecord, playerProfile(), config().personality);
+      patch.provider = 'Meilleur score osu!';
     }
-    state.updatedAt = Date.now();
+    coachState.applyIfCurrent({ status: 'playing', beatmapId }, patch);
   }).catch(error => log(`Score osu! indisponible pour la beatmap ${beatmapId} : ${error.message}`));
 }
 
 async function onlinePlayCountForBeatmap(beatmapId) {
   const cfg = config();
   if (!osuIntegrationReady(cfg)) return null;
-  const profile = cachedOsuProfile || await osuApi.fetchUser(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), String(cfg.osu_username).trim());
+  const profile = cachedOsuProfile || await osuClient(cfg).fetchUser(String(cfg.osu_username).trim());
   cachedOsuProfile = profile;
-  const maps = await osuApi.fetchUserMostPlayed(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), profile.id, 100);
+  const maps = await osuClient(cfg).fetchUserMostPlayed(profile.id, 100);
   return maps.find(item => Number(item.beatmapId) === Number(beatmapId))?.count ?? null;
 }
 
@@ -337,28 +325,32 @@ function showMapSelection(data) {
   record.phase = 'selected';
   record.totalAttempts = attempts.length;
   record.sessionAttempts = sessionIsActive ? sessionTrack?.attempts || 0 : 0;
-  state = { status: 'selected', report: selectedMapSummary(record, config().personality), provider: 'Map sélectionnée', record, visibleUntil: displayDeadline(), updatedAt: Date.now() };
+  coachState.set({ status: 'selected', report: selectedMapSummary(record, config().personality), provider: 'Map sélectionnée', record, visibleUntil: displayDeadline() });
   scheduleSelectionCommentary(beatmapId);
   if (osuIntegrationReady() && Number(data.beatmap?.set || 0)) {
     const cfg = config();
-    osuApi.fetchBeatmapsetComments(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), Number(data.beatmap.set))
+    osuClient(cfg).fetchBeatmapsetComments(Number(data.beatmap.set))
       .then(comments => {
         const mood = communityMood(comments);
-        if (!mood || state.status !== 'selected' || Number(state.record?.beatmapId) !== beatmapId) return;
-        state.record.communityMood = { kind: mood.kind, sampleSize: mood.sampleSize, report: mood.report };
-        if (!state.record.selectionCommentary) state.report = `${selectedMapSummary(state.record, config().personality)} ${state.record.communityMood.report}`.slice(0, Number(config().max_report_chars) || 1000);
-        state.updatedAt = Date.now();
+        if (!mood) return;
+        const current = coachState.get();
+        const nextRecord = { ...current.record, communityMood: { kind: mood.kind, sampleSize: mood.sampleSize, report: mood.report } };
+        const patch = { record: nextRecord };
+        if (!nextRecord.selectionCommentary) patch.report = clampReport(`${selectedMapSummary(nextRecord, config().personality)} ${nextRecord.communityMood.report}`, config().max_report_chars);
+        coachState.applyIfCurrent({ status: 'selected', beatmapId }, patch);
       })
       .catch(error => log(`Température communautaire indisponible pour le set ${data.beatmap.set} : ${error.message}`));
   }
   onlinePlayCountForBeatmap(beatmapId).then(playCount => {
-    if (playCount === null || state.status !== 'selected' || Number(state.record?.beatmapId) !== beatmapId) return;
-    state.record.osuPlayCount = playCount;
-    if (!state.record.selectionCommentary) {
-      state.report = `${selectedMapSummary(state.record, config().personality)}${state.record.communityMood?.report ? ` ${state.record.communityMood.report}` : ''}`.slice(0, Number(config().max_report_chars) || 1000);
-      state.provider = 'Compteur officiel osu!';
+    if (playCount === null) return;
+    const current = coachState.get();
+    const nextRecord = { ...current.record, osuPlayCount: playCount };
+    const patch = { record: nextRecord };
+    if (!nextRecord.selectionCommentary) {
+      patch.report = clampReport(`${selectedMapSummary(nextRecord, config().personality)}${nextRecord.communityMood?.report ? ` ${nextRecord.communityMood.report}` : ''}`, config().max_report_chars);
+      patch.provider = 'Compteur officiel osu!';
     }
-    state.updatedAt = Date.now();
+    coachState.applyIfCurrent({ status: 'selected', beatmapId }, patch);
   }).catch(error => log(`Compteur osu! indisponible pour la beatmap ${beatmapId} : ${error.message}`));
 }
 
@@ -375,7 +367,7 @@ async function analyze(data, completion = 'finished') {
   const incidents = runTracker.finish(data);
   if (!activeDifficultyProfile && osuIntegrationReady()) {
     const cfg = config();
-    try { activeDifficultyProfile = await osuApi.fetchBeatmapFailProfile(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), record.beatmapId); }
+    try { activeDifficultyProfile = await osuClient(cfg).fetchBeatmapFailProfile(record.beatmapId); }
     catch (error) { log(`Profil temporel osu! indisponible au résultat : ${error.message}`); }
   }
   record.sectionAnalysis = summarizeRunIncidents(incidents, activeDifficultyProfile);
@@ -385,7 +377,8 @@ async function analyze(data, completion = 'finished') {
   busy = true;
   const records = history();
   const localPrevious = stats.previousMapResult(records, record.beatmapId);
-  const liveOnlineBest = Number(state.record?.beatmapId) === Number(record.beatmapId) ? state.record?.onlineBest : null;
+  const stateBeforeAnalysis = coachState.get();
+  const liveOnlineBest = Number(stateBeforeAnalysis.record?.beatmapId) === Number(record.beatmapId) ? stateBeforeAnalysis.record?.onlineBest : null;
   const previous = liveOnlineBest && (!localPrevious || Number(liveOnlineBest.score) > Number(localPrevious.score)) ? liveOnlineBest : localPrevious;
   record.previousScore = previous ? {
     timestamp: previous.timestamp, score: previous.score, accuracy: previous.accuracy,
@@ -398,28 +391,26 @@ async function analyze(data, completion = 'finished') {
   record.fatigueAdvice = stats.fatigueAdvice([...records, record], config());
   records.push(record);
   saveHistory(records);
-  state = { status: 'analyzing', report: instantSummary(record, previous), provider: '', record, visibleUntil: displayDeadline(), updatedAt: Date.now() };
+  coachState.set({ status: 'analyzing', report: instantSummary(record, previous), provider: '', record, visibleUntil: displayDeadline() });
   log(`Analyse: ${record.artist} - ${record.title}`);
   try {
     const result = await aiProviders.runAi(promptFor(record, records.slice(0, -1)));
     if (generation !== analysisGeneration) return;
     const filtered = record.fatigueAdvice ? result.text : removeUnscheduledBreakAdvice(result.text);
-    state = { ...state, status: 'ready', report: filtered || instantSummary(record, previous), provider: result.provider, visibleUntil: displayDeadline(), updatedAt: Date.now() };
-    saveState();
+    coachState.set({ ...coachState.get(), status: 'ready', report: filtered || instantSummary(record, previous), provider: result.provider, visibleUntil: displayDeadline() });
     if (completion === 'finished' && osuIntegrationReady()) {
       setTimeout(() => syncOsuProfile().then(profile => {
-        if (generation !== analysisGeneration || Number(state.record?.beatmapId) !== Number(record.beatmapId)) return;
+        if (generation !== analysisGeneration) return;
         const celebration = profileProgressSummary(profile.progress);
         if (!celebration) return;
-        state = { ...state, report: `${state.report}${celebration}`.slice(0, Number(config().max_report_chars) || 1000), visibleUntil: displayDeadline(), updatedAt: Date.now() };
-        saveState();
+        const current = coachState.get();
+        coachState.applyIfCurrent({ beatmapId: record.beatmapId }, { report: clampReport(`${current.report}${celebration}`, config().max_report_chars), visibleUntil: displayDeadline() });
       }).catch(error => log(`Sync osu! après partie impossible : ${error.message}`)), 15000);
     }
   } catch (error) {
     if (generation !== analysisGeneration) return;
     log(`IA indisponible: ${error.message}`);
-    state = { ...state, status: 'ready', provider: 'Analyse locale', visibleUntil: displayDeadline(), updatedAt: Date.now() };
-    saveState();
+    coachState.set({ ...coachState.get(), status: 'ready', provider: 'Analyse locale', visibleUntil: displayDeadline() });
   } finally { if (generation === analysisGeneration) busy = false; }
 }
 
@@ -428,7 +419,7 @@ function cancelAnalysisForNewMap() {
   analysisGeneration++;
   aiProviders.cancel();
   busy = false;
-  state = { status: 'idle', report: '', provider: '', record: null, visibleUntil: 0, updatedAt: Date.now() };
+  coachState.set({ status: 'idle', report: '', provider: '', record: null, visibleUntil: 0 });
   log('Analyse annulée : une nouvelle map a démarré');
 }
 
@@ -478,7 +469,7 @@ function handleGameOnline() {
   gameStatus = 'online';
   cancelSelectionCommentary();
   selectionCommentCache.clear();
-  state = { status: 'welcome', report: sessionWelcome(), provider: 'Nouvelle session', record: null, visibleUntil: displayDeadline(), updatedAt: Date.now() };
+  coachState.set({ status: 'welcome', report: sessionWelcome(), provider: 'Nouvelle session', record: null, visibleUntil: displayDeadline() });
   log('osu! détecté par processus : nouvelle session');
   openDashboardIfNeeded();
 }
@@ -490,7 +481,7 @@ function handleGameOffline(reason = 'osu! fermé') {
   selectionCommentCache.clear();
   if (dashboardOpenTimer) { clearTimeout(dashboardOpenTimer); dashboardOpenTimer = null; }
   cancelActiveAnalysis(reason);
-  state = { status: 'offline', report: '', provider: '', record: null, visibleUntil: 0, updatedAt: Date.now() };
+  coachState.set({ status: 'offline', report: '', provider: '', record: null, visibleUntil: 0 });
   log('osu! fermé : overlay masqué et session arrêtée');
 }
 
@@ -510,7 +501,7 @@ const gameMonitor = createGameMonitor({
   onAbandon: () => {
     runTracker.reset();
     cancelActiveAnalysis('sortie volontaire de map');
-    state = { status: 'idle', report: '', provider: '', record: null, visibleUntil: 0, updatedAt: Date.now() };
+    coachState.set({ status: 'idle', report: '', provider: '', record: null, visibleUntil: 0 });
     log('Sortie volontaire ignorée : aucun historique et aucune génération IA');
   },
 });
@@ -530,8 +521,8 @@ const server = createCoachServer({
   },
   getProgress: days => progressByDay(history(), days),
   getWarmup: () => warmupRecommendations(history()),
-  getState: () => state,
-  setState: next => { state = next; },
+  getState: coachState.get,
+  setState: coachState.set,
   getGameStatus: () => gameStatus,
   resolveLanguage,
   getHistory: history,

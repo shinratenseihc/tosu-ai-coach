@@ -2,6 +2,20 @@
 
 Les changements importants de TOSU AI Coach sont documentés ici.
 
+## 0.3.1 — 2026-07-22
+
+### Corrigé
+
+- Accès cross-origin limité à la lecture de l’état par l’overlay ; les actions refusent désormais les origines web externes.
+- Routes d’analyse et d’aperçu limitées aux requêtes `POST`.
+- Options de recommandations et de mises à jour en ligne désactivées dans le dashboard tant qu’elles ne sont pas disponibles.
+
+### Modifié
+
+- Vérification syntaxique automatique de tous les fichiers JavaScript du projet.
+- Validation de configuration, gestion de l’état, limitation des rapports et client osu! centralisés dans des modules testables.
+- Couverture de tests étendue aux règles CORS, à la configuration, au client osu! et aux transitions d’état.
+
 ## 0.3.0 — 2026-07-21
 
 ### Ajouté
