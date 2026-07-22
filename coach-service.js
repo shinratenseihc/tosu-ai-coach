@@ -31,6 +31,8 @@ let analysisGeneration = 0;
 let lastSessionNotice = '';
 let gameStatus = 'unknown';
 let cachedOsuProfile = null;
+let cachedOsuClient = null;
+let cachedOsuClientKey = '';
 let dashboardLastSeenAt = 0;
 let dashboardOpenTimer = null;
 const runTracker = createRunTracker();
@@ -238,12 +240,23 @@ function osuIntegrationReady(cfg = config()) {
   return Boolean(cfg.osu_integration_enabled && String(cfg.osu_username || '').trim() && String(cfg.osu_client_id || '').trim() && String(cfg.osu_client_secret || '').trim());
 }
 
+function osuClient(cfg = config()) {
+  const clientId = String(cfg.osu_client_id || '').trim();
+  const clientSecret = String(cfg.osu_client_secret || '').trim();
+  const key = `${clientId}\0${clientSecret}`;
+  if (!cachedOsuClient || cachedOsuClientKey !== key) {
+    cachedOsuClient = osuApi.createClient({ clientId, clientSecret });
+    cachedOsuClientKey = key;
+  }
+  return cachedOsuClient;
+}
+
 async function syncOsuProfile() {
   const cfg = config();
   if (!osuIntegrationReady(cfg)) throw new Error('intégration osu! non configurée : active-la et renseigne pseudo, client ID et secret');
   const snapshots = readJson(PROFILE_HISTORY_PATH, []);
   const previousOsu = [...snapshots].reverse().find(item => item.source === 'osu-sync') || null;
-  const profile = await osuApi.fetchUser(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), String(cfg.osu_username).trim());
+  const profile = await osuClient(cfg).fetchUser(String(cfg.osu_username).trim());
   cachedOsuProfile = profile;
   const rank = pickRank(profile, cfg.rank_region);
   if (rank) {
@@ -276,9 +289,9 @@ function warmupRecommendations(items, profile = playerProfile()) {
 async function onlineBestForBeatmap(beatmapId) {
   const cfg = config();
   if (!osuIntegrationReady(cfg)) return null;
-  const profile = cachedOsuProfile || await osuApi.fetchUser(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), String(cfg.osu_username).trim());
+  const profile = cachedOsuProfile || await osuClient(cfg).fetchUser(String(cfg.osu_username).trim());
   cachedOsuProfile = profile;
-  const scores = await osuApi.fetchUserBeatmapScores(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), profile.id, beatmapId);
+  const scores = await osuClient(cfg).fetchUserBeatmapScores(profile.id, beatmapId);
   return scores[0] || null;
 }
 
@@ -295,7 +308,7 @@ function showMapStart(data) {
   activeDifficultyBeatmapId = Number(beatmapId);
   if (osuIntegrationReady()) {
     const cfg = config();
-    osuApi.fetchBeatmapFailProfile(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), beatmapId)
+    osuClient(cfg).fetchBeatmapFailProfile(beatmapId)
       .then(profile => { if (activeDifficultyBeatmapId === Number(beatmapId)) activeDifficultyProfile = profile; })
       .catch(error => log(`Profil temporel osu! indisponible pour la beatmap ${beatmapId} : ${error.message}`));
   }
@@ -317,9 +330,9 @@ function showMapStart(data) {
 async function onlinePlayCountForBeatmap(beatmapId) {
   const cfg = config();
   if (!osuIntegrationReady(cfg)) return null;
-  const profile = cachedOsuProfile || await osuApi.fetchUser(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), String(cfg.osu_username).trim());
+  const profile = cachedOsuProfile || await osuClient(cfg).fetchUser(String(cfg.osu_username).trim());
   cachedOsuProfile = profile;
-  const maps = await osuApi.fetchUserMostPlayed(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), profile.id, 100);
+  const maps = await osuClient(cfg).fetchUserMostPlayed(profile.id, 100);
   return maps.find(item => Number(item.beatmapId) === Number(beatmapId))?.count ?? null;
 }
 
@@ -341,7 +354,7 @@ function showMapSelection(data) {
   scheduleSelectionCommentary(beatmapId);
   if (osuIntegrationReady() && Number(data.beatmap?.set || 0)) {
     const cfg = config();
-    osuApi.fetchBeatmapsetComments(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), Number(data.beatmap.set))
+    osuClient(cfg).fetchBeatmapsetComments(Number(data.beatmap.set))
       .then(comments => {
         const mood = communityMood(comments);
         if (!mood || state.status !== 'selected' || Number(state.record?.beatmapId) !== beatmapId) return;
@@ -375,7 +388,7 @@ async function analyze(data, completion = 'finished') {
   const incidents = runTracker.finish(data);
   if (!activeDifficultyProfile && osuIntegrationReady()) {
     const cfg = config();
-    try { activeDifficultyProfile = await osuApi.fetchBeatmapFailProfile(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), record.beatmapId); }
+    try { activeDifficultyProfile = await osuClient(cfg).fetchBeatmapFailProfile(record.beatmapId); }
     catch (error) { log(`Profil temporel osu! indisponible au résultat : ${error.message}`); }
   }
   record.sectionAnalysis = summarizeRunIncidents(incidents, activeDifficultyProfile);

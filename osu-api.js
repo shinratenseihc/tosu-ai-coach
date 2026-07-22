@@ -140,4 +140,14 @@ async function fetchUserMostPlayed(clientId, clientSecret, userId, limit = 100) 
   return items;
 }
 
-module.exports = { getToken, fetchUser, fetchUserBeatmapScores, fetchUserMostPlayed, fetchBeatmapFailProfile, fetchBeatmapsetComments, normalizeScore, normalizeBeatmapPlaycount, clearTokenCache };
+function createClient({ clientId, clientSecret }) {
+  return {
+    fetchUser: username => fetchUser(clientId, clientSecret, username),
+    fetchUserBeatmapScores: (userId, beatmapId) => fetchUserBeatmapScores(clientId, clientSecret, userId, beatmapId),
+    fetchUserMostPlayed: (userId, limit) => fetchUserMostPlayed(clientId, clientSecret, userId, limit),
+    fetchBeatmapsetComments: beatmapsetId => fetchBeatmapsetComments(clientId, clientSecret, beatmapsetId),
+    fetchBeatmapFailProfile: beatmapId => fetchBeatmapFailProfile(clientId, clientSecret, beatmapId),
+  };
+}
+
+module.exports = { createClient, getToken, fetchUser, fetchUserBeatmapScores, fetchUserMostPlayed, fetchBeatmapFailProfile, fetchBeatmapsetComments, normalizeScore, normalizeBeatmapPlaycount, clearTokenCache };
