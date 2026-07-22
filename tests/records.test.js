@@ -10,6 +10,11 @@ test('makeRecord normalise un résultat TOSU', () => {
   assert.equal(record.progressPercent, 50);
 });
 
+test('makeRecord conserve les mods live si le resultat est vide', () => {
+  const record = makeRecord({ resultsScreen: { mods: { name: '', array: [] } }, play: { mods: { name: '', array: [{ acronym: 'HD' }, { acronym: 'HR' }], rate: 1 } }, beatmap: { id: 9 } });
+  assert.equal(record.mods, 'HDHR');
+});
+
 test('makeLiveRecord ne conserve que la référence utile', () => {
   const live = makeLiveRecord({ beatmap: { id: 9 } }, { timestamp: 'x', score: 10, accuracy: 97, combo: 20, maxCombo: 30, misses: 2, pp: 5, secret: 'non' });
   assert.equal(live.phase, 'playing');
