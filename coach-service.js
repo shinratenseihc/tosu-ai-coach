@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const osuApi = require('./osu-api.js');
 const { createAiProviders } = require('./lib/ai-providers.js');
-const { buildPrompt, coachingKnowledge, personalityInstruction, removeUnscheduledBreakAdvice } = require('./lib/coaching.js');
+const { buildPrompt, buildSelectionPrompt, coachingKnowledge, personalityInstruction, removeUnscheduledBreakAdvice } = require('./lib/coaching.js');
 const stats = require('./lib/stats.js');
 const { createStorage } = require('./lib/storage.js');
 const { createGameMonitor } = require('./lib/game-monitor.js');
@@ -12,6 +12,8 @@ const sessions = require('./lib/sessions.js');
 const { localDateKey, progressByDay, sessionMemory, sessionSummary, sessionTransition, splitSessions, summarizeSession } = sessions;
 const recordFunctions = require('./lib/records.js');
 const { instantSummary, makeLiveRecord, makeRecord, mapStartSummary, selectedMapSummary } = recordFunctions;
+const { createRunTracker, summarizeRunIncidents } = require('./lib/run-analysis.js');
+const { communityMood } = require('./lib/community-mood.js');
 
 const ROOT = __dirname;
 const DASHBOARD_DIR = path.join(ROOT, 'dashboard');
@@ -31,6 +33,9 @@ let gameStatus = 'unknown';
 let cachedOsuProfile = null;
 let dashboardLastSeenAt = 0;
 let dashboardOpenTimer = null;
+const runTracker = createRunTracker();
+let activeDifficultyProfile = null;
+let activeDifficultyBeatmapId = 0;
 
 function config() {
   return storage.config();
@@ -58,6 +63,53 @@ function log(message) {
 }
 
 const aiProviders = createAiProviders({ rootDir: ROOT, getConfig: config, log });
+const selectionAiProviders = createAiProviders({ rootDir: ROOT, getConfig: config, log: message => log(`Sélection IA : ${message}`) });
+let selectionTimer = null;
+let selectionGeneration = 0;
+const selectionCommentCache = new Map();
+
+function selectionKey(beatmapId) {
+  return `${Number(beatmapId) || 0}:${config().personality || 'balanced'}:${resolveLanguage()}`;
+}
+
+function cancelSelectionCommentary() {
+  if (selectionTimer) { clearTimeout(selectionTimer); selectionTimer = null; }
+  selectionGeneration++;
+  selectionAiProviders.cancel();
+}
+
+function applySelectionCommentary(beatmapId, commentary) {
+  if (state.status !== 'selected' || Number(state.record?.beatmapId) !== Number(beatmapId)) return false;
+  state.record.selectionCommentary = commentary.text;
+  state.report = commentary.text;
+  state.provider = `${commentary.provider} • pote commentateur`;
+  state.visibleUntil = displayDeadline();
+  state.updatedAt = Date.now();
+  return true;
+}
+
+function scheduleSelectionCommentary(beatmapId) {
+  cancelSelectionCommentary();
+  const key = selectionKey(beatmapId);
+  const cached = selectionCommentCache.get(key);
+  if (cached) { applySelectionCommentary(beatmapId, cached); return; }
+  const generation = selectionGeneration;
+  selectionTimer = setTimeout(async () => {
+    selectionTimer = null;
+    if (generation !== selectionGeneration || state.status !== 'selected' || Number(state.record?.beatmapId) !== Number(beatmapId)) return;
+    const record = { ...state.record };
+    try {
+      const result = await selectionAiProviders.runAi(buildSelectionPrompt({ record, config: config(), languageLabel: languageName(resolveLanguage()) }));
+      if (generation !== selectionGeneration) return;
+      const commentary = { provider: result.provider, text: result.text.slice(0, 280) };
+      selectionCommentCache.set(key, commentary);
+      if (selectionCommentCache.size > 50) selectionCommentCache.delete(selectionCommentCache.keys().next().value);
+      if (applySelectionCommentary(beatmapId, commentary)) log(`Commentaire IA de sélection prêt pour la beatmap ${beatmapId}`);
+    } catch (error) {
+      if (generation === selectionGeneration) log(`Commentaire IA de sélection indisponible : ${error.message}`);
+    }
+  }, 3000);
+}
 
 function history() {
   return storage.history();
@@ -233,17 +285,31 @@ async function onlineBestForBeatmap(beatmapId) {
 function showMapStart(data) {
   const beatmapId = data.beatmap?.id || 0;
   if (!beatmapId) return;
+  const cachedSelectionCommentary = selectionCommentCache.get(selectionKey(beatmapId)) || null;
+  cancelSelectionCommentary();
   const previous = stats.bestMapResult(history(), beatmapId);
   const record = makeLiveRecord(data, previous);
-  state = { status: 'playing', report: mapStartSummary(record, playerProfile(), config().personality), provider: previous ? 'Meilleur score connu' : 'Nouvelle référence', record, visibleUntil: displayDeadline(), updatedAt: Date.now() };
+  if (cachedSelectionCommentary) record.selectionCommentary = cachedSelectionCommentary.text;
+  runTracker.start(data);
+  activeDifficultyProfile = null;
+  activeDifficultyBeatmapId = Number(beatmapId);
+  if (osuIntegrationReady()) {
+    const cfg = config();
+    osuApi.fetchBeatmapFailProfile(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), beatmapId)
+      .then(profile => { if (activeDifficultyBeatmapId === Number(beatmapId)) activeDifficultyProfile = profile; })
+      .catch(error => log(`Profil temporel osu! indisponible pour la beatmap ${beatmapId} : ${error.message}`));
+  }
+  state = { status: 'playing', report: cachedSelectionCommentary?.text || mapStartSummary(record, playerProfile(), config().personality), provider: cachedSelectionCommentary ? `${cachedSelectionCommentary.provider} • pote commentateur` : previous ? 'Meilleur score connu' : 'Nouvelle référence', record, visibleUntil: displayDeadline(), updatedAt: Date.now() };
   onlineBestForBeatmap(beatmapId).then(onlineBest => {
     if (!onlineBest || state.status !== 'playing' || Number(state.record?.beatmapId) !== Number(beatmapId)) return;
     const localBest = state.record.previousScore;
     const best = !localBest || onlineBest.score > Number(localBest.score || 0) ? onlineBest : localBest;
     state.record.previousScore = best;
     state.record.onlineBest = onlineBest;
-    state.report = mapStartSummary(state.record, playerProfile(), config().personality);
-    state.provider = 'Meilleur score osu!';
+    if (!state.record.selectionCommentary) {
+      state.report = mapStartSummary(state.record, playerProfile(), config().personality);
+      state.provider = 'Meilleur score osu!';
+    }
     state.updatedAt = Date.now();
   }).catch(error => log(`Score osu! indisponible pour la beatmap ${beatmapId} : ${error.message}`));
 }
@@ -272,11 +338,26 @@ function showMapSelection(data) {
   record.totalAttempts = attempts.length;
   record.sessionAttempts = sessionIsActive ? sessionTrack?.attempts || 0 : 0;
   state = { status: 'selected', report: selectedMapSummary(record, config().personality), provider: 'Map sélectionnée', record, visibleUntil: displayDeadline(), updatedAt: Date.now() };
+  scheduleSelectionCommentary(beatmapId);
+  if (osuIntegrationReady() && Number(data.beatmap?.set || 0)) {
+    const cfg = config();
+    osuApi.fetchBeatmapsetComments(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), Number(data.beatmap.set))
+      .then(comments => {
+        const mood = communityMood(comments);
+        if (!mood || state.status !== 'selected' || Number(state.record?.beatmapId) !== beatmapId) return;
+        state.record.communityMood = { kind: mood.kind, sampleSize: mood.sampleSize, report: mood.report };
+        if (!state.record.selectionCommentary) state.report = `${selectedMapSummary(state.record, config().personality)} ${state.record.communityMood.report}`.slice(0, Number(config().max_report_chars) || 1000);
+        state.updatedAt = Date.now();
+      })
+      .catch(error => log(`Température communautaire indisponible pour le set ${data.beatmap.set} : ${error.message}`));
+  }
   onlinePlayCountForBeatmap(beatmapId).then(playCount => {
     if (playCount === null || state.status !== 'selected' || Number(state.record?.beatmapId) !== beatmapId) return;
     state.record.osuPlayCount = playCount;
-    state.report = selectedMapSummary(state.record, config().personality);
-    state.provider = 'Compteur officiel osu!';
+    if (!state.record.selectionCommentary) {
+      state.report = `${selectedMapSummary(state.record, config().personality)}${state.record.communityMood?.report ? ` ${state.record.communityMood.report}` : ''}`.slice(0, Number(config().max_report_chars) || 1000);
+      state.provider = 'Compteur officiel osu!';
+    }
     state.updatedAt = Date.now();
   }).catch(error => log(`Compteur osu! indisponible pour la beatmap ${beatmapId} : ${error.message}`));
 }
@@ -291,6 +372,13 @@ async function analyze(data, completion = 'finished') {
   if (busy) return;
   const generation = ++analysisGeneration;
   const record = makeRecord(data, completion);
+  const incidents = runTracker.finish(data);
+  if (!activeDifficultyProfile && osuIntegrationReady()) {
+    const cfg = config();
+    try { activeDifficultyProfile = await osuApi.fetchBeatmapFailProfile(String(cfg.osu_client_id).trim(), String(cfg.osu_client_secret).trim(), record.beatmapId); }
+    catch (error) { log(`Profil temporel osu! indisponible au résultat : ${error.message}`); }
+  }
+  record.sectionAnalysis = summarizeRunIncidents(incidents, activeDifficultyProfile);
   const fingerprint = stats.recordFingerprint(record);
   if (!record.beatmapId || fingerprint === lastFingerprint) return;
   lastFingerprint = fingerprint;
@@ -305,6 +393,8 @@ async function analyze(data, completion = 'finished') {
   } : null;
   record.offsetAdvice = stats.offsetAdvice([...records, record]);
   record.retryStreak = completion === 'finished' ? 0 : stats.retryStreak(records, record.beatmapId) + 1;
+  const sessionMinutes = stats.currentSessionMinutes([...records, record], config().session_gap_minutes);
+  record.sessionContext = { minutes: sessionMinutes, phase: sessionMinutes < 60 ? 'warmup' : 'established' };
   record.fatigueAdvice = stats.fatigueAdvice([...records, record], config());
   records.push(record);
   saveHistory(records);
@@ -386,6 +476,8 @@ function sessionWelcome() {
 function handleGameOnline() {
   if (gameStatus === 'online') return;
   gameStatus = 'online';
+  cancelSelectionCommentary();
+  selectionCommentCache.clear();
   state = { status: 'welcome', report: sessionWelcome(), provider: 'Nouvelle session', record: null, visibleUntil: displayDeadline(), updatedAt: Date.now() };
   log('osu! détecté par processus : nouvelle session');
   openDashboardIfNeeded();
@@ -394,6 +486,8 @@ function handleGameOnline() {
 function handleGameOffline(reason = 'osu! fermé') {
   if (gameStatus === 'offline') return;
   gameStatus = 'offline';
+  cancelSelectionCommentary();
+  selectionCommentCache.clear();
   if (dashboardOpenTimer) { clearTimeout(dashboardOpenTimer); dashboardOpenTimer = null; }
   cancelActiveAnalysis(reason);
   state = { status: 'offline', report: '', provider: '', record: null, visibleUntil: 0, updatedAt: Date.now() };
@@ -411,8 +505,10 @@ const gameMonitor = createGameMonitor({
     showSessionRecap();
     showMapStart(data);
   },
+  onPlayUpdate: data => runTracker.update(data),
   onResult: analyze,
   onAbandon: () => {
+    runTracker.reset();
     cancelActiveAnalysis('sortie volontaire de map');
     state = { status: 'idle', report: '', provider: '', record: null, visibleUntil: 0, updatedAt: Date.now() };
     log('Sortie volontaire ignorée : aucun historique et aucune génération IA');

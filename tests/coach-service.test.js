@@ -61,7 +61,7 @@ test('retryStreak compte les abandons consécutifs de la même map', () => {
 });
 
 test('fatigueAdvice signale une baisse nette, pas une variation minime', () => {
-  const records = [completed({ timestamp: '2026-07-20T10:00:00Z', accuracy: 97, timing: { average: 0, unstableRate: 100 } }), completed({ timestamp: '2026-07-20T10:15:00Z', accuracy: 96, timing: { average: 0, unstableRate: 115 } }), completed({ timestamp: '2026-07-20T10:31:00Z', accuracy: 94, timing: { average: 0, unstableRate: 135 } })];
+  const records = [completed({ timestamp: '2026-07-20T10:00:00Z', accuracy: 97, timing: { average: 0, unstableRate: 100 } }), completed({ timestamp: '2026-07-20T10:32:00Z', accuracy: 96, timing: { average: 0, unstableRate: 115 } }), completed({ timestamp: '2026-07-20T11:05:00Z', accuracy: 94, timing: { average: 0, unstableRate: 135 } })];
   assert.ok(fatigueAdvice(records));
   assert.equal(fatigueAdvice([completed(), completed(), completed()]), null);
 });
@@ -76,15 +76,15 @@ test('fatigueAdvice ne transforme pas une hausse d’UR seule en alerte', () => 
 
 test('fatigueAdvice bloque les conseils rapprochés pendant le cooldown', () => {
   const records = [
-    completed({ timestamp: '2026-07-20T10:00:00Z', accuracy: 98, fatigueAdvice: { reason: 'performance_drop' } }),
-    completed({ timestamp: '2026-07-20T10:15:00Z', accuracy: 96 }),
-    completed({ timestamp: '2026-07-20T10:25:00Z', accuracy: 93 }),
+    completed({ timestamp: '2026-07-20T10:10:00Z', accuracy: 98, fatigueAdvice: { reason: 'performance_drop' } }),
+    completed({ timestamp: '2026-07-20T10:35:00Z', accuracy: 96 }),
+    completed({ timestamp: '2026-07-20T11:05:00Z', accuracy: 93 }),
   ];
   assert.equal(fatigueAdvice(records), null);
 });
 
-test('fatigueAdvice suggère une pause après quinze minutes et six échecs', () => {
-  const records = [0, 3, 6, 9, 12, 16].map(minutes => completed({ timestamp: `2026-07-20T10:${String(minutes).padStart(2, '0')}:00Z`, completion: 'failed' }));
+test('fatigueAdvice suggère une pause après une heure et six échecs', () => {
+  const records = ['10:00', '10:12', '10:24', '10:36', '10:48', '11:01'].map(time => completed({ timestamp: `2026-07-20T${time}:00Z`, completion: 'failed' }));
   assert.equal(fatigueAdvice(records).reason, 'failure_streak');
 });
 
@@ -150,7 +150,7 @@ test('selectedMapSummary annonce les tentatives avant le lancement', () => {
   assert.match(report, /6 parties au total enregistrées par le coach/);
   assert.match(report, /2 dans cette session/);
   assert.match(report, /97\.25%/);
-  assert.match(selectedMapSummary({ totalAttempts: 0 }), /Jamais jouée/);
+  assert.match(selectedMapSummary({ totalAttempts: 0 }), /Nouvelle|référence|Terrain|dossier|passage/i);
   assert.match(selectedMapSummary({ totalAttempts: 2, osuPlayCount: 19 }), /19 parties au total selon osu!/);
 });
 

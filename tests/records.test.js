@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { instantSummary, makeLiveRecord, makeRecord } = require('../lib/records.js');
+const { instantSummary, makeLiveRecord, makeRecord, selectedMapSummary } = require('../lib/records.js');
 
 test('makeRecord normalise un résultat TOSU', () => {
   const record = makeRecord({ resultsScreen: { playerName: 'Shinra', score: 123, accuracy: 98.5, maxCombo: 44, hits: { 0: 1, 100: 2, 300: 30 } }, play: { hitErrorArray: [-5, 5] }, beatmap: { id: 9, set: 8, artist: 'A', title: 'T', version: 'D', stats: { maxCombo: 100 }, time: { live: 50, lastObject: 100 } } }, 'finished', new Date('2026-07-21T12:00:00Z'));
@@ -20,4 +20,11 @@ test('makeLiveRecord ne conserve que la référence utile', () => {
 test('instantSummary célèbre un petit gain de PP', () => {
   const current = { completion: 'finished', accuracy: 98, misses: 1, combo: 100, maxCombo: 200, score: 1000, pp: 10.1, timing: { average: 0 } };
   assert.match(instantSummary(current, { accuracy: 98, misses: 1, score: 1000, pp: 10 }, 0), /\+0\.1pp|fête/);
+});
+
+test('selectedMapSummary varie les découvertes et retire l’ancienne blague', () => {
+  const first = selectedMapSummary({ beatmapId: 9, timestamp: '2026-07-21T12:00:00Z', totalAttempts: 0 }, 'training_companion');
+  const second = selectedMapSummary({ beatmapId: 10, timestamp: '2026-07-21T12:00:01Z', totalAttempts: 0 }, 'training_companion');
+  assert.notEqual(first, second);
+  assert.doesNotMatch(`${first} ${second}`, /barre de vie|jamais jouée|première rencontre/i);
 });

@@ -17,6 +17,9 @@ Avant même de lancer une map, il peut afficher son nombre de parties officiel o
 - Détection de la map sélectionnée, du lancement, des résultats, fails et sorties volontaires.
 - Compteur officiel osu! avant lancement pour les 100 maps les plus jouées, avec fallback sur l’historique local.
 - Meilleure référence connue de la difficulté : score, accuracy, misses, combo et PP.
+- Position temporelle des erreurs croisée avec les zones où les joueurs échouent souvent, sans inventer leur cause.
+- Température communautaire humoristique à la sélection, sans afficher ni conserver les commentaires ou pseudos.
+- Pote-commentateur génératif après 3 secondes sur la même map : réaction Claude/Codex courte, mise en cache pour la session et annulée immédiatement si la sélection change ou si la partie démarre.
 - Coaching court sur l’aim, la speed, la lecture, le rythme et la régularité.
 - Historique local, sessions, progression sur 7/30 jours et routine d’échauffement.
 - Six personnalités : équilibré, compagnon d’entraînement, bienveillant, sarcastique, compétiteur et analyste.
@@ -121,7 +124,7 @@ Au moins un fournisseur doit répondre. Sinon, relance `codex` ou `claude` dans 
 
 ## 5. Connexion osu! optionnelle
 
-L’intégration osu! récupère le profil public, le rank, les PP, les meilleurs scores publics et le compteur des maps les plus jouées. Elle ne nécessite ni abonnement osu!supporter ni accès payant.
+L’intégration osu! récupère le profil public, le rank, les PP, les meilleurs scores publics, le compteur des maps les plus jouées, les zones d’échec de la difficulté et les commentaires publics du beatmapset. Ces derniers servent uniquement à calculer une ambiance anonyme et ne sont ni affichés ni conservés. Elle ne nécessite ni abonnement osu!supporter ni accès payant.
 
 Chaque utilisateur crée gratuitement sa propre application OAuth osu!, puis saisit son Client ID et son Client Secret dans le tableau de bord. Le secret reste local et n’est jamais renvoyé par l’API du coach.
 

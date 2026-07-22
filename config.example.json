@@ -12,6 +12,7 @@
   "overlay_show_logo": true,
   "history_limit": 2000,
   "session_gap_minutes": 90,
+  "fatigue_min_session_minutes": 60,
   "pause_cooldown_minutes": 60,
   "failure_pause_minutes": 15,
   "failure_pause_attempts": 6,

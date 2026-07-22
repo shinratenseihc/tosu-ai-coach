@@ -17,6 +17,7 @@ Le fichier actif est `%LOCALAPPDATA%\TosuAICoach\config.json`, créé depuis `co
 | `overlay_show_logo` | `true` | Affiche le logo en haut de l’overlay |
 | `history_limit` | `2000` | Parties conservées |
 | `session_gap_minutes` | `90` | Temps sans partie avant une nouvelle session |
+| `fatigue_min_session_minutes` | `60` | Première heure considérée comme échauffement ; aucune analyse de fatigue avant ce seuil |
 | `pause_cooldown_minutes` | `60` | Délai minimal entre deux conseils de pause |
 | `failure_pause_minutes` | `15` | Durée minimale d’une série d’échecs avant de proposer une pause |
 | `failure_pause_attempts` | `6` | Nombre minimal d’échecs consécutifs avant une pause |

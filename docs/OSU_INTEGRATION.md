@@ -1,6 +1,6 @@
 # Connexion osu! (optionnelle)
 
-Cette intégration permet au coach de récupérer ton profil public osu! (rank global, rank pays, pp), tes meilleurs scores publics sur la difficulté jouée, le compteur officiel de tes maps les plus jouées et de mettre à jour automatiquement ton « rank actuel » dans le profil joueur.
+Cette intégration permet au coach de récupérer ton profil public osu! (rank global, rank pays, pp), tes meilleurs scores publics sur la difficulté jouée, le compteur officiel de tes maps les plus jouées, les zones d’échec observées sur la map et une tendance anonyme des commentaires communautaires. Elle met aussi à jour automatiquement ton « rank actuel » dans le profil joueur.
 
 Elle est entièrement optionnelle. Sans elle, tout le reste du coach fonctionne normalement.
 
@@ -11,6 +11,8 @@ Elle est gratuite et ne nécessite pas d’abonnement osu!supporter. Un compte o
 Tu crées ta propre application OAuth sur ton compte osu!, puis tu donnes son identifiant et son secret au coach. Le service les stocke uniquement dans ta configuration locale (`%LOCALAPPDATA%\TosuAICoach\config.json`), jamais dans le dépôt, et les utilise pour lire des données publiques via l'API osu! v2.
 
 Aucune donnée n'est envoyée ailleurs que vers `osu.ppy.sh`. Le secret n'est jamais réaffiché par le tableau de bord une fois enregistré.
+
+Les commentaires sont traités temporairement pour produire une ambiance générale et humoristique. Le coach n’affiche et ne conserve ni texte brut, ni pseudo, ni donnée personnelle. Ce contenu utilisateur est toujours considéré comme non fiable et ne peut pas donner d’instructions au coach.
 
 ## Étape 1 — Créer ton application osu!
 

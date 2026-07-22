@@ -11,6 +11,8 @@ let cachedToken = null;
 let cachedTokenExpiry = 0;
 let cachedTokenKey = '';
 const mostPlayedCache = new Map();
+const beatmapProfileCache = new Map();
+const commentCache = new Map();
 const MOST_PLAYED_CACHE_MS = 5 * 60 * 1000;
 
 function timedFetch(url, options = {}) {
@@ -91,6 +93,34 @@ async function fetchUserBeatmapScores(clientId, clientSecret, userId, beatmapId)
   return (Array.isArray(data) ? data : data.scores || []).map(normalizeScore).sort((a, b) => b.score - a.score);
 }
 
+async function fetchBeatmapFailProfile(clientId, clientSecret, beatmapId) {
+  const cached = beatmapProfileCache.get(String(beatmapId));
+  if (cached && Date.now() - cached.fetchedAt < MOST_PLAYED_CACHE_MS) return cached.value;
+  const token = await getToken(clientId, clientSecret);
+  const url = `${API_BASE}/beatmaps/${encodeURIComponent(beatmapId)}`;
+  const response = await timedFetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+  if (response.status === 401) { clearTokenCache(); throw new Error('token osu! expiré ou révoqué, réessaie'); }
+  if (!response.ok) throw new Error(`osu! beatmap HTTP ${response.status}`);
+  const fail = (await response.json()).failtimes?.fail;
+  const value = Array.isArray(fail) && fail.length ? fail.map(Number) : null;
+  beatmapProfileCache.set(String(beatmapId), { fetchedAt: Date.now(), value });
+  return value;
+}
+
+async function fetchBeatmapsetComments(clientId, clientSecret, beatmapsetId) {
+  const cached = commentCache.get(String(beatmapsetId));
+  if (cached && Date.now() - cached.fetchedAt < MOST_PLAYED_CACHE_MS) return cached.value;
+  const token = await getToken(clientId, clientSecret);
+  const params = new URLSearchParams({ commentable_type: 'beatmapset', commentable_id: String(beatmapsetId), parent_id: '0', sort: 'top' });
+  const response = await timedFetch(`${API_BASE}/comments?${params}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+  if (response.status === 401) { clearTokenCache(); throw new Error('token osu! expiré ou révoqué, réessaie'); }
+  if (!response.ok) throw new Error(`osu! commentaires HTTP ${response.status}`);
+  const data = await response.json();
+  const value = [...(data.pinned_comments || []), ...(data.comments || [])].slice(0, 30).map(item => ({ message: String(item.message || '') }));
+  commentCache.set(String(beatmapsetId), { fetchedAt: Date.now(), value });
+  return value;
+}
+
 function normalizeBeatmapPlaycount(item) {
   return { beatmapId: Number(item?.beatmap_id || item?.beatmap?.id || 0), count: Number(item?.count || 0) };
 }
@@ -110,4 +140,4 @@ async function fetchUserMostPlayed(clientId, clientSecret, userId, limit = 100) 
   return items;
 }
 
-module.exports = { getToken, fetchUser, fetchUserBeatmapScores, fetchUserMostPlayed, normalizeScore, normalizeBeatmapPlaycount, clearTokenCache };
+module.exports = { getToken, fetchUser, fetchUserBeatmapScores, fetchUserMostPlayed, fetchBeatmapFailProfile, fetchBeatmapsetComments, normalizeScore, normalizeBeatmapPlaycount, clearTokenCache };
