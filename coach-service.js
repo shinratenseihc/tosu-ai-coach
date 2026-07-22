@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const osuApi = require('./osu-api.js');
 const { createAiProviders } = require('./lib/ai-providers.js');
-const { buildPrompt, buildSelectionPrompt, coachingKnowledge, personalityInstruction, removeUnscheduledBreakAdvice } = require('./lib/coaching.js');
+const { buildPrompt, buildSelectionPrompt, clampReport, coachingKnowledge, personalityInstruction, removeUnscheduledBreakAdvice } = require('./lib/coaching.js');
 const stats = require('./lib/stats.js');
 const { createStorage } = require('./lib/storage.js');
 const { createGameMonitor } = require('./lib/game-monitor.js');
@@ -184,7 +184,7 @@ function showSessionRecap(now = new Date()) {
   const warmupText = warmup.length ? ` Échauffement : ${warmup.map(item => `${item.title} (${Number(item.stars).toFixed(2)}★)`).join(' → ')}.` : '';
   state = {
     status: 'ready',
-    report: `${recap.report}${warmupText}`.slice(0, Number(config().max_report_chars) || 1000),
+    report: clampReport(`${recap.report}${warmupText}`, config().max_report_chars),
     provider: recap.newDay ? 'Objectif du jour' : 'Reprise de session',
     record: recap.latest,
     visibleUntil: displayDeadline(),
@@ -346,7 +346,7 @@ function showMapSelection(data) {
         const mood = communityMood(comments);
         if (!mood || state.status !== 'selected' || Number(state.record?.beatmapId) !== beatmapId) return;
         state.record.communityMood = { kind: mood.kind, sampleSize: mood.sampleSize, report: mood.report };
-        if (!state.record.selectionCommentary) state.report = `${selectedMapSummary(state.record, config().personality)} ${state.record.communityMood.report}`.slice(0, Number(config().max_report_chars) || 1000);
+        if (!state.record.selectionCommentary) state.report = clampReport(`${selectedMapSummary(state.record, config().personality)} ${state.record.communityMood.report}`, config().max_report_chars);
         state.updatedAt = Date.now();
       })
       .catch(error => log(`Température communautaire indisponible pour le set ${data.beatmap.set} : ${error.message}`));
@@ -355,7 +355,7 @@ function showMapSelection(data) {
     if (playCount === null || state.status !== 'selected' || Number(state.record?.beatmapId) !== beatmapId) return;
     state.record.osuPlayCount = playCount;
     if (!state.record.selectionCommentary) {
-      state.report = `${selectedMapSummary(state.record, config().personality)}${state.record.communityMood?.report ? ` ${state.record.communityMood.report}` : ''}`.slice(0, Number(config().max_report_chars) || 1000);
+      state.report = clampReport(`${selectedMapSummary(state.record, config().personality)}${state.record.communityMood?.report ? ` ${state.record.communityMood.report}` : ''}`, config().max_report_chars);
       state.provider = 'Compteur officiel osu!';
     }
     state.updatedAt = Date.now();
@@ -411,7 +411,7 @@ async function analyze(data, completion = 'finished') {
         if (generation !== analysisGeneration || Number(state.record?.beatmapId) !== Number(record.beatmapId)) return;
         const celebration = profileProgressSummary(profile.progress);
         if (!celebration) return;
-        state = { ...state, report: `${state.report}${celebration}`.slice(0, Number(config().max_report_chars) || 1000), visibleUntil: displayDeadline(), updatedAt: Date.now() };
+        state = { ...state, report: clampReport(`${state.report}${celebration}`, config().max_report_chars), visibleUntil: displayDeadline(), updatedAt: Date.now() };
         saveState();
       }).catch(error => log(`Sync osu! après partie impossible : ${error.message}`)), 15000);
     }
