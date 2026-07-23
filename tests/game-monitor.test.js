@@ -19,6 +19,15 @@ test('une map sélectionnée est signalée une seule fois jusqu’au lancement',
   assert.deepEqual(events, ['selected:7', 'selected:8', 'start', 'selected:8']);
 });
 
+test('changer les mods sur la meme map actualise la selection', () => {
+  const events = [];
+  const monitor = createGameMonitor({ platform: 'linux', getTosuUrl: () => '', onMapSelected: data => events.push(data.play.mods.name || 'NM') });
+  monitor.processTosuData({ state: { name: 'selectPlay' }, beatmap: { id: 7 }, play: { mods: { name: '', array: [], rate: 1 } } });
+  monitor.processTosuData({ state: { name: 'selectPlay' }, beatmap: { id: 7 }, play: { mods: { name: 'HD', array: [{ acronym: 'HD' }], rate: 1 } } });
+  monitor.processTosuData({ state: { name: 'selectPlay' }, beatmap: { id: 7 }, play: { mods: { name: 'HD', array: [{ acronym: 'HD' }], rate: 1 } } });
+  assert.deepEqual(events, ['NM', 'HD']);
+});
+
 test('un ancien résultat est ignoré jusqu’au lancement d’une map', () => {
   const events = [];
   const monitor = createGameMonitor({
